@@ -1,0 +1,69 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { config } from "./config.js";
+
+export type Provider = "google" | "microsoft";
+
+export interface Account {
+  label: string; // user-chosen short name, e.g. "work"
+  provider: Provider;
+  email: string;
+  refreshToken: string;
+  scopes: string;
+  addedAt: string;
+}
+
+export interface State {
+  accounts: Record<string, Account>; // key: label
+  clients: Record<string, any>; // MCP OAuth dynamic clients
+  codes: Record<string, { clientId: string; challenge: string; redirectUri: string; expires: number }>;
+  access: Record<string, { clientId: string; expires: number }>;
+  refresh: Record<string, { clientId: string }>;
+}
+
+const file = join(config.dataDir, "state.enc");
+
+function encrypt(plain: string): Buffer {
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", config.encryptionKey, iv);
+  const enc = Buffer.concat([c.update(plain, "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), enc]);
+}
+
+function decrypt(buf: Buffer): string {
+  const iv = buf.subarray(0, 12);
+  const tag = buf.subarray(12, 28);
+  const d = createDecipheriv("aes-256-gcm", config.encryptionKey, iv);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString("utf8");
+}
+
+function empty(): State {
+  return { accounts: {}, clients: {}, codes: {}, access: {}, refresh: {} };
+}
+
+let state: State = existsSync(file) ? { ...empty(), ...JSON.parse(decrypt(readFileSync(file))) } : empty();
+
+export function getState(): State {
+  return state;
+}
+
+export function save(): void {
+  const tmp = file + ".tmp";
+  writeFileSync(tmp, encrypt(JSON.stringify(state)), { mode: 0o600 });
+  renameSync(tmp, file);
+}
+
+export function getAccount(label: string): Account {
+  const a = state.accounts[label];
+  if (!a) {
+    const known = Object.keys(state.accounts).join(", ") || "none";
+    throw new Error(`Unknown account "${label}". Connected accounts: ${known}`);
+  }
+  return a;
+}
+
+export function listAccounts(provider?: Provider): Account[] {
+  return Object.values(state.accounts).filter((a) => !provider || a.provider === provider);
+}

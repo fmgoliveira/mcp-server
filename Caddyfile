@@ -1,0 +1,5 @@
+# Replace with your real hostname (its DNS A/AAAA record must point at this VM)
+mcp.example.com {
+	encode zstd gzip
+	reverse_proxy mcp:3000
+}
