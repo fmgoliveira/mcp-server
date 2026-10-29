@@ -6,6 +6,6 @@ services:
     volumes:
       - mcp-data:/data
     ports:
-      - "3000:3000"
+      - "5757:3000"
 volumes:
   mcp-data:
