@@ -15,10 +15,22 @@ export interface Account {
   token?: string; // non-expiring access token (GitHub OAuth App only; GitHub App tokens use refreshToken)
   scopes: string;
   addedAt: string;
+  credentialId?: string; // OAuth app used to connect this account; absent/"env" = the client from .env
+}
+
+// OAuth client (app) credentials managed in /admin. The secret lives only inside the encrypted state file.
+export interface Credential {
+  id: string;
+  provider: Provider;
+  name: string;
+  clientId: string;
+  clientSecret: string;
+  addedAt: string;
 }
 
 export interface State {
   accounts: Record<string, Account>; // key: label
+  credentials: Record<string, Credential>; // key: id
   clients: Record<string, any>; // MCP OAuth dynamic clients
   codes: Record<string, { clientId: string; challenge: string; redirectUri: string; expires: number }>;
   access: Record<string, { clientId: string; expires: number }>;
@@ -43,7 +55,7 @@ function decrypt(buf: Buffer): string {
 }
 
 function empty(): State {
-  return { accounts: {}, clients: {}, codes: {}, access: {}, refresh: {} };
+  return { accounts: {}, credentials: {}, clients: {}, codes: {}, access: {}, refresh: {} };
 }
 
 let state: State = existsSync(file) ? { ...empty(), ...JSON.parse(decrypt(readFileSync(file))) } : empty();
@@ -69,4 +81,36 @@ export function getAccount(label: string): Account {
 
 export function listAccounts(provider?: Provider): Account[] {
   return Object.values(state.accounts).filter((a) => !provider || a.provider === provider);
+}
+
+export const ENV_CREDENTIAL = "env";
+
+export interface ResolvedCredential {
+  id: string;
+  provider: Provider;
+  name: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+/** All OAuth clients usable for a provider: the one from .env (if set) plus those added in /admin. */
+export function listCredentials(provider?: Provider): ResolvedCredential[] {
+  const out: ResolvedCredential[] = [];
+  for (const p of PROVIDERS) {
+    if (provider && p !== provider) continue;
+    const env = config[p];
+    if (env.clientId && env.clientSecret) {
+      out.push({ id: ENV_CREDENTIAL, provider: p, name: "Default (.env)", clientId: env.clientId, clientSecret: env.clientSecret });
+    }
+    for (const c of Object.values(state.credentials)) if (c.provider === p) out.push(c);
+  }
+  return out;
+}
+
+/** Resolve the OAuth client for a provider; no id = first available (prefers .env). */
+export function getCredential(provider: Provider, id?: string): ResolvedCredential {
+  const all = listCredentials(provider);
+  const hit = id ? all.find((c) => c.id === id) : all[0];
+  if (!hit) throw new Error(id ? `Unknown ${provider} OAuth app "${id}"` : `No ${provider} OAuth app configured; add one in /admin`);
+  return hit;
 }

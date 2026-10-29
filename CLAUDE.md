@@ -8,7 +8,7 @@ an `account` label; list/search tools fan out over all accounts of that provider
 - `npm run dev` – run with tsx, loading `.env` via `--env-file` (the app does not read `.env` itself; Docker injects it via `env_file`)
 - `npm run build` – `tsc` to `dist/` (this is also the typecheck; there are no tests or linter)
 - `npm start` – run the built server
-- `docker compose up -d --build` – production (publishes port 3000, `mcp-data` volume; put your own reverse proxy in front)
+- `docker compose up -d --build` – production (publishes port 5757, bind-mounts `./data` to `/data`; put your own reverse proxy in front; the host dir must be writable by uid 1000)
 
 ## Architecture (`src/`)
 - `server.ts` – Express app. `mcpAuthRouter` exposes OAuth 2.1 for **Claude → this server**; `POST /mcp`
@@ -16,7 +16,7 @@ an `account` label; list/search tools fan out over all accounts of that provider
 - `auth-provider.ts` – the MCP OAuth provider (dynamic client registration, PKCE). Approval = admin password.
 - `admin.ts` – `/admin` UI (session cookie): add/remove accounts, OAuth callbacks
   (`/oauth/<google|microsoft|canva>/callback`), (modern single-file UI, light/dark, no client-side framework).
-- `store.ts` – single AES-256-GCM encrypted state file (`DATA_DIR/state.enc`): accounts, MCP clients, tokens.
+- `store.ts` – single AES-256-GCM encrypted state file (`DATA_DIR/state.enc`): accounts, OAuth app credentials (client id/secret), MCP clients, tokens. `listCredentials()`/`getCredential()` merge the `.env` client (id `env`) with those added in /admin.
   `Provider = OAuthProvider = "google" | "microsoft" | "canva" | "github"`; all providers use OAuth.
 - `providers.ts` – Google/Microsoft/Canva/GitHub OAuth connect + refresh (`accessToken(label)`; Canva uses PKCE + Basic
   client auth).
@@ -33,6 +33,8 @@ an `account` label; list/search tools fan out over all accounts of that provider
 | microsoft | OAuth refresh token (rotates) | `refreshToken` | `graph.microsoft.com` |
 | canva | OAuth 2.0 + PKCE (Canva Connect), refresh token is single-use and rotates | `refreshToken` | `api.canva.com` |
 | github | GitHub App user-to-server OAuth (8h token + rotating refresh token), or OAuth App (non-expiring `token`) | `refreshToken` or `token` | `api.github.com` |
+
+Each account stores `credentialId` (which OAuth app connected it; absent = `.env`). Refresh uses the same app, so several apps per provider can coexist (e.g. one Canva draft integration per Canva account, since draft/public integrations only authorize their owner). Apps are managed in /admin → OAuth apps; an app in use can't be removed.
 
 Labels are user-chosen (`[a-zA-Z0-9_-]{1,32}`); re-using a label replaces the account.
 

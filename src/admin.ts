@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { config } from "./config.js";
-import { buildAuthUrl, completeConnect, invalidate } from "./providers.js";
-import { getState, listAccounts, save, PROVIDERS, type OAuthProvider } from "./store.js";
+import { buildAuthUrl, completeConnect, invalidate, redirectUri } from "./providers.js";
+import { ENV_CREDENTIAL, getState, listAccounts, listCredentials, save, PROVIDERS, type OAuthProvider } from "./store.js";
 import { passwordOk, recordFail, tooManyFails } from "./auth-provider.js";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -31,7 +31,7 @@ const META: Record<OAuthProvider, { name: string; abbr: string; color: string; b
   canva: { name: "Canva", abbr: "C", color: "#7d2ae8", blurb: "Designs, exports, folders" },
   github: { name: "GitHub", abbr: "GH", color: "#57606a", blurb: "Repos, issues, pull requests" },
 };
-const configured = (p: OAuthProvider) => !!config[p].clientId && !!config[p].clientSecret;
+const configured = (p: OAuthProvider) => listCredentials(p).length > 0;
 
 const CSS = `
 :root{--bg:#f5f6f8;--card:#fff;--fg:#14171f;--muted:#667085;--line:#e4e7ec;--accent:#4f46e5;--accent-fg:#fff;--danger:#d92d20;--ok:#12b76a;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.08);color-scheme:light dark}
@@ -68,6 +68,9 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:tran
 .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
 .field{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap} .field>div{flex:1;min-width:180px}
 label.l{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.hint{color:var(--muted);font-size:12px;margin:6px 0 0;word-break:break-all}
+select{font:inherit;width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}@media(max-width:560px){.grid2{grid-template-columns:1fr}}
 .note{color:var(--muted);font-size:13px;margin:12px 0 0}
 .center{max-width:380px;margin:14vh auto 0}
 pre{white-space:pre-wrap;background:var(--bg);padding:12px;border-radius:9px;font-size:13px;border:1px solid var(--line)}
@@ -114,10 +117,11 @@ admin.get("/admin", guard, (req, res) => {
   const rows = accounts
     .map((a) => {
       const p = a.provider;
+      const app = listCredentials(p).find((c) => c.id === (a.credentialId ?? ENV_CREDENTIAL));
       return `<div class=row>${badge(p)}
-<div class=grow><div class=name>${esc(a.label)}</div><div class=meta>${META[p].name} · ${esc(a.email || "unknown identity")} · added ${esc(a.addedAt.slice(0, 10))}</div></div>
+<div class=grow><div class=name>${esc(a.label)}</div><div class=meta>${META[p].name} · ${esc(a.email || "unknown identity")} · app: ${esc(app?.name ?? "missing")} · added ${esc(a.addedAt.slice(0, 10))}</div></div>
 <div class=actions>
-<form method=post action=/admin/connect><input type=hidden name=label value="${esc(a.label)}"><input type=hidden name=provider value="${p}"><button title="Re-authorize this account">Reconnect</button></form>
+<form method=post action=/admin/connect><input type=hidden name=label value="${esc(a.label)}"><input type=hidden name=provider value="${p}"><input type=hidden name=credential value="${esc(a.credentialId ?? ENV_CREDENTIAL)}"><button title="Re-authorize this account">Reconnect</button></form>
 <form method=post action=/admin/remove onsubmit="return confirm('Remove ${esc(a.label).replace(/'/g, "")}?')"><input type=hidden name=label value="${esc(a.label)}"><button class=danger>Remove</button></form>
 </div></div>`;
     })
@@ -127,9 +131,26 @@ admin.get("/admin", guard, (req, res) => {
   const tiles = PROVIDERS.map((p) => {
     const ok = configured(p);
     return `<label class=tile><input type=radio name=provider value="${p}" ${ok ? "" : "disabled"} ${p === first ? "checked" : ""} required>
-<span>${badge(p)}<b>${META[p].name}</b><small>${ok ? META[p].blurb : "Not configured (set client id/secret in .env)"}</small></span></label>`;
+<span>${badge(p)}<b>${META[p].name}</b><small>${ok ? META[p].blurb : "No OAuth app yet (add one below)"}</small></span></label>`;
   }).join("");
 
+  const creds = listCredentials();
+  const credOptions = creds
+    .map((c) => `<option value="${esc(c.id)}" data-provider="${c.provider}">${esc(META[c.provider].name)} · ${esc(c.name)}</option>`)
+    .join("");
+  const credRows = creds
+    .map((c) => {
+      const used = listAccounts(c.provider).filter((a) => (a.credentialId ?? ENV_CREDENTIAL) === c.id).length;
+      const action =
+        c.id === ENV_CREDENTIAL
+          ? `<span class=meta>from .env</span>`
+          : `<form method=post action=/admin/credentials/remove onsubmit="return confirm('Remove this OAuth app?')"><input type=hidden name=id value="${esc(c.id)}"><button class=danger ${used ? "disabled title='In use by connected accounts'" : ""}>Remove</button></form>`;
+      return `<div class=row>${badge(c.provider)}<div class=grow><div class=name>${esc(c.name)}</div>
+<div class=meta>${META[c.provider].name} · client ${esc(c.clientId.slice(0, 18))}${c.clientId.length > 18 ? "…" : ""} · ${used} account${used === 1 ? "" : "s"}</div></div><div class=actions>${action}</div></div>`;
+    })
+    .join("");
+  const providerOptions = PROVIDERS.map((p) => `<option value="${p}">${META[p].name}</option>`).join("");
+  const redirectHints = PROVIDERS.map((p) => `${META[p].name}: ${redirectUri(p)}`).join("<br>");
   const mcpUrl = `${config.publicUrl}/mcp`;
   res.type("html").send(
     layout(
@@ -146,12 +167,42 @@ admin.get("/admin", guard, (req, res) => {
 <h2>Add an account</h2>
 <form class=card method=post action=/admin/connect style="padding:18px">
 <div class=tiles>${tiles}</div>
+<div style="margin-bottom:14px"><label class=l for=credential>OAuth app</label>
+<select id=credential name=credential required>${credOptions}</select></div>
 <div class=field><div><label class=l for=label>Label</label>
 <input id=label type=text name=label placeholder="e.g. work, ninf, personal" pattern="[a-zA-Z0-9_\\-]{1,32}" required></div>
 <button class=primary>Connect →</button></div>
 <p class=note>The label is what Claude uses to pick an account. Re-using a label replaces that account. Use a private window to choose the right identity on the provider's consent screen.</p>
 </form>
-</main>`,
+
+<h2>OAuth apps</h2>
+<div class=card>${credRows || `<div class=empty>No OAuth apps yet.</div>`}</div>
+<form class=card method=post action=/admin/credentials style="padding:18px;margin-top:12px" autocomplete=off>
+<div class=grid2>
+<div><label class=l for=cp>Provider</label><select id=cp name=provider required>${providerOptions}</select></div>
+<div><label class=l for=cn>Name</label><input id=cn type=text name=name placeholder="e.g. canva-ninf" maxlength=40 required></div>
+<div><label class=l for=ci>Client ID</label><input id=ci type=text name=clientId required></div>
+<div><label class=l for=cs>Client secret</label><input id=cs type=password name=clientSecret autocomplete=new-password required></div>
+</div>
+<p style="margin:14px 0 0"><button class=primary>Save OAuth app</button></p>
+<p class=note>Secrets are stored encrypted. Re-using a name replaces that app. Each app needs this redirect URL registered:</p>
+<p class=hint>${redirectHints}</p>
+</form>
+</main>
+<script>
+(function(){
+  var sel=document.getElementById('credential');if(!sel)return;
+  var opts=[].slice.call(sel.options);
+  function sync(){
+    var r=document.querySelector('input[name=provider]:checked');if(!r)return;
+    var first=null;
+    opts.forEach(function(o){var ok=o.dataset.provider===r.value;o.hidden=!ok;o.disabled=!ok;if(ok&&!first)first=o;});
+    if(sel.selectedOptions[0]&&sel.selectedOptions[0].disabled&&first)sel.value=first.value;
+  }
+  document.querySelectorAll('input[name=provider]').forEach(function(i){i.addEventListener('change',sync);});
+  sync();
+})();
+</script>`,
     ),
   );
 });
@@ -162,8 +213,33 @@ admin.post("/admin/connect", guard, (req, res) => {
   if (!PROVIDERS.includes(provider) || !/^[a-zA-Z0-9_-]{1,32}$/.test(label)) {
     return void res.status(400).send("Bad provider or label");
   }
-  if (!configured(provider)) return void res.status(400).send(`${provider} client credentials are not configured`);
-  res.redirect(buildAuthUrl(provider, label));
+  const credId = String(req.body?.credential ?? "");
+  const cred = listCredentials(provider).find((c) => c.id === (credId || undefined) ) ?? listCredentials(provider)[0];
+  if (!cred || (credId && cred.id !== credId)) return void res.status(400).send(`No matching ${provider} OAuth app; add one first`);
+  res.redirect(buildAuthUrl(provider, label, cred.id));
+});
+
+admin.post("/admin/credentials", guard, (req, res) => {
+  const provider = req.body?.provider as OAuthProvider;
+  const name = String(req.body?.name ?? "").trim().slice(0, 40);
+  const clientId = String(req.body?.clientId ?? "").trim();
+  const clientSecret = String(req.body?.clientSecret ?? "").trim();
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (!PROVIDERS.includes(provider) || !slug || !clientId || !clientSecret) return void res.status(400).send("Provider, name, client ID and secret are required");
+  const id = `${provider}-${slug}`;
+  if (id === ENV_CREDENTIAL) return void res.status(400).send("Reserved name");
+  const prev = getState().credentials[id];
+  getState().credentials[id] = { id, provider, name, clientId, clientSecret, addedAt: prev?.addedAt ?? new Date().toISOString() };
+  save();
+  res.redirect("/admin");
+});
+
+admin.post("/admin/credentials/remove", guard, (req, res) => {
+  const id = String(req.body?.id ?? "");
+  if (listAccounts().some((a) => a.credentialId === id)) return void res.status(409).send("OAuth app is used by connected accounts; remove or reconnect them first");
+  delete getState().credentials[id];
+  save();
+  res.redirect("/admin");
 });
 
 admin.post("/admin/remove", guard, (req, res) => {

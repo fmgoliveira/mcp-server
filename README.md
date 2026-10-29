@@ -51,7 +51,7 @@ openssl rand -base64 24  # -> ADMIN_PASSWORD
 # set PUBLIC_URL=https://your-hostname in .env (TLS/reverse proxy is yours; point it at port 3000)
 docker compose up -d --build
 ```
-Back up the `mcp-data` volume **and** keep `ENCRYPTION_KEY`; without the key the state can't be read.
+State lives in the bind-mounted `./data` folder (the container runs as uid 1000, so on Linux run `sudo chown -R 1000:1000 data` once). Back up `./data` **and** keep `ENCRYPTION_KEY`; without the key the state can't be read.
 
 ## 4. Link your accounts
 Open `https://YOUR_HOST/admin`, sign in, then for each account pick a provider tile and a label (e.g. `work`, `ninf`,
@@ -75,3 +75,7 @@ Claude opens the approval page; enter the admin password. Then try: *"List my co
 - Tool annotations mark read-only tools, so Claude can auto-allow reads while asking before sends/edits/deletes.
 - Rotate access: remove an account in `/admin`, or revoke the app in the Google/Microsoft account security page.
 - Anyone with the admin password can connect a client to this server. Use a long random one.
+
+## Multiple OAuth apps per provider
+
+Client ID/secret can be added in `/admin` → **OAuth apps** (secrets are stored inside the encrypted state file), in addition to or instead of the `.env` values. Pick the app when connecting an account. Useful for Canva: a draft/public integration only authorizes its owner, so create one integration per Canva account and add each here. Every app needs the same redirect URL (`${PUBLIC_URL}/oauth/<provider>/callback`).

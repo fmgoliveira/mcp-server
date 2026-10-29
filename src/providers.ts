@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { config } from "./config.js";
-import { Account, getAccount, getState, OAuthProvider, save } from "./store.js";
+import { Account, getAccount, getCredential, getState, OAuthProvider, ResolvedCredential, save } from "./store.js";
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
@@ -12,22 +12,23 @@ const CANVA_AUTH = "https://www.canva.com/api/oauth/authorize";
 const CANVA_TOKEN = "https://api.canva.com/rest/v1/oauth/token";
 
 // Canva requires PKCE (S256) and HTTP Basic client auth on the token endpoint
-const canvaBasic = () => ({
-  authorization: `Basic ${Buffer.from(`${config.canva.clientId}:${config.canva.clientSecret}`).toString("base64")}`,
+const canvaBasic = (c: ResolvedCredential) => ({
+  authorization: `Basic ${Buffer.from(`${c.clientId}:${c.clientSecret}`).toString("base64")}`,
 });
 
 export const redirectUri = (p: OAuthProvider) => `${config.publicUrl}/oauth/${p}/callback`;
 
 // pending connect flows: state -> {provider,label}
-const pending = new Map<string, { provider: OAuthProvider; label: string; verifier: string; expires: number }>();
+const pending = new Map<string, { provider: OAuthProvider; label: string; credentialId: string; verifier: string; expires: number }>();
 
-export function buildAuthUrl(provider: OAuthProvider, label: string): string {
+export function buildAuthUrl(provider: OAuthProvider, label: string, credentialId?: string): string {
+  const cred = getCredential(provider, credentialId);
   const state = randomBytes(16).toString("hex");
   const verifier = randomBytes(48).toString("base64url");
-  pending.set(state, { provider, label, verifier, expires: Date.now() + 10 * 60_000 });
+  pending.set(state, { provider, label, credentialId: cred.id, verifier, expires: Date.now() + 10 * 60_000 });
   const p = new URLSearchParams();
   if (provider === "github") {
-    p.set("client_id", config.github.clientId);
+    p.set("client_id", cred.clientId);
     p.set("redirect_uri", redirectUri("github"));
     if (config.github.scopes.length) p.set("scope", config.github.scopes.join(" ")); // OAuth App only
     p.set("prompt", "select_account");
@@ -35,7 +36,7 @@ export function buildAuthUrl(provider: OAuthProvider, label: string): string {
     return `${GITHUB_AUTH}?${p}`;
   }
   if (provider === "canva") {
-    p.set("client_id", config.canva.clientId);
+    p.set("client_id", cred.clientId);
     p.set("redirect_uri", redirectUri("canva"));
     p.set("response_type", "code");
     p.set("scope", config.canva.scopes.join(" "));
@@ -45,7 +46,7 @@ export function buildAuthUrl(provider: OAuthProvider, label: string): string {
     return `${CANVA_AUTH}?${p}`;
   }
   if (provider === "google") {
-    p.set("client_id", config.google.clientId);
+    p.set("client_id", cred.clientId);
     p.set("redirect_uri", redirectUri("google"));
     p.set("response_type", "code");
     p.set("scope", config.google.scopes.join(" "));
@@ -54,7 +55,7 @@ export function buildAuthUrl(provider: OAuthProvider, label: string): string {
     p.set("state", state);
     return `${GOOGLE_AUTH}?${p}`;
   }
-  p.set("client_id", config.microsoft.clientId);
+  p.set("client_id", cred.clientId);
   p.set("redirect_uri", redirectUri("microsoft"));
   p.set("response_type", "code");
   p.set("scope", config.microsoft.scopes.join(" "));
@@ -79,18 +80,19 @@ export async function completeConnect(provider: OAuthProvider, code: string, sta
   pending.delete(state);
   if (!ctx || ctx.provider !== provider || ctx.expires < Date.now()) throw new Error("Invalid or expired state");
   const cfg = config[provider];
+  const cred = getCredential(provider, ctx.credentialId);
   const tok =
     provider === "canva"
       ? await tokenRequest(
           CANVA_TOKEN,
           { grant_type: "authorization_code", code, code_verifier: ctx.verifier, redirect_uri: redirectUri("canva") },
-          canvaBasic(),
+          canvaBasic(cred),
         )
       : await tokenRequest(provider === "google" ? GOOGLE_TOKEN : provider === "github" ? GITHUB_TOKEN : MS_TOKEN, {
           grant_type: "authorization_code",
           code,
-          client_id: cfg.clientId,
-          client_secret: cfg.clientSecret,
+          client_id: cred.clientId,
+          client_secret: cred.clientSecret,
           redirect_uri: redirectUri(provider),
         });
   // GitHub OAuth Apps issue a single non-expiring token; every other flow must return a refresh token
@@ -128,6 +130,7 @@ export async function completeConnect(provider: OAuthProvider, code: string, sta
     token: tok.refresh_token ? undefined : tok.access_token,
     scopes: tok.scope ?? cfg.scopes.join(" "),
     addedAt: new Date().toISOString(),
+    credentialId: cred.id,
   };
   getState().accounts[ctx.label] = account;
   save();
@@ -147,15 +150,15 @@ export async function accessToken(label: string): Promise<string> {
   const acc = getAccount(label);
   if (!acc.refreshToken && acc.token) return acc.token; // non-expiring token (GitHub OAuth App)
   if (!acc.refreshToken) throw new Error(`Account "${label}" has no refresh token; reconnect it in /admin`);
-  const cfg = config[acc.provider];
+  const cred = getCredential(acc.provider, acc.credentialId);
   const tok =
     acc.provider === "canva"
-      ? await tokenRequest(CANVA_TOKEN, { grant_type: "refresh_token", refresh_token: acc.refreshToken }, canvaBasic())
+      ? await tokenRequest(CANVA_TOKEN, { grant_type: "refresh_token", refresh_token: acc.refreshToken }, canvaBasic(cred))
       : await tokenRequest(acc.provider === "google" ? GOOGLE_TOKEN : acc.provider === "github" ? GITHUB_TOKEN : MS_TOKEN, {
           grant_type: "refresh_token",
           refresh_token: acc.refreshToken,
-          client_id: cfg.clientId,
-          client_secret: cfg.clientSecret,
+          client_id: cred.clientId,
+          client_secret: cred.clientSecret,
           ...(acc.provider === "microsoft" ? { scope: config.microsoft.scopes.join(" ") } : {}),
         });
   if (tok.refresh_token && tok.refresh_token !== acc.refreshToken) {
