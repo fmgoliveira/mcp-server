@@ -32,6 +32,32 @@ export const config = {
       ].join(" ")
     ).split(/\s+/),
   },
+  github: {
+    // GitHub App (recommended): permissions are set on the app, leave GITHUB_SCOPES empty.
+    // GitHub OAuth App: set e.g. GITHUB_SCOPES="repo read:user notifications".
+    clientId: process.env.GITHUB_CLIENT_ID ?? "",
+    clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+    scopes: (process.env.GITHUB_SCOPES ?? "").split(/[\s,]+/).filter(Boolean),
+  },
+  canva: {
+    clientId: process.env.CANVA_CLIENT_ID ?? "",
+    clientSecret: process.env.CANVA_CLIENT_SECRET ?? "",
+    scopes: (
+      process.env.CANVA_SCOPES ??
+      [
+        "profile:read",
+        "design:meta:read",
+        "design:content:read",
+        "design:content:write",
+        "asset:read",
+        "asset:write",
+        "folder:read",
+        "folder:write",
+        "brandtemplate:meta:read",
+        "brandtemplate:content:read",
+      ].join(" ")
+    ).split(/\s+/),
+  },
   microsoft: {
     clientId: process.env.MS_CLIENT_ID ?? "",
     clientSecret: process.env.MS_CLIENT_SECRET ?? "",

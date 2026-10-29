@@ -6,29 +6,57 @@ const MAX_OUT = 60_000; // characters returned to the model per call
 const ALLOWED_HOSTS: Record<Provider, RegExp> = {
   google: /^[a-z0-9-]+\.googleapis\.com$/,
   microsoft: /^graph\.microsoft\.com$/,
+  github: /^api\.github\.com$/,
+  canva: /^api\.canva\.com$/,
 };
 
 export interface ApiOpts {
   method?: string;
-  query?: Record<string, string | number | boolean | undefined>;
+  query?: Record<string, string | number | boolean | string[] | undefined>; // arrays repeat the key (`include[]=a&include[]=b`)
   body?: unknown;
   headers?: Record<string, string>;
   raw?: boolean; // return text instead of JSON
+  pages?: number; // follow RFC 5988 `Link: rel="next"` up to N pages, concatenating array results (GitHub)
+}
+
+function nextLink(r: Response): string | undefined {
+  const link = r.headers.get("link");
+  if (!link) return undefined;
+  for (const part of link.split(",")) {
+    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+function checkHost(provider: Provider, _label: string, u: URL) {
+  const ok = u.protocol === "https:" && ALLOWED_HOSTS[provider].test(u.hostname);
+  if (!ok) throw new Error(`Host ${u.hostname} is not allowed for ${provider} accounts`);
+}
+
+function defaultHeaders(provider: Provider): Record<string, string> {
+  if (provider === "github") {
+    return { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "multi-account-mcp" };
+  }
+  return {};
 }
 
 export async function api(label: string, provider: Provider, url: string, opts: ApiOpts = {}): Promise<any> {
   const acc = getAccount(label);
   if (acc.provider !== provider) throw new Error(`Account "${label}" is a ${acc.provider} account, not ${provider}`);
-  const u = new URL(url);
-  if (u.protocol !== "https:" || !ALLOWED_HOSTS[provider].test(u.hostname)) {
-    throw new Error(`Host ${u.hostname} is not allowed for ${provider} accounts`);
+  const first = new URL(url);
+  checkHost(provider, label, first);
+  for (const [k, v] of Object.entries(opts.query ?? {})) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) v.forEach((x) => first.searchParams.append(k, x));
+    else first.searchParams.set(k, String(v));
   }
-  for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) u.searchParams.set(k, String(v));
 
-  const send = async () =>
+  const send = async (u: URL) =>
     fetch(u, {
       method: opts.method ?? (opts.body ? "POST" : "GET"),
       headers: {
+        ...defaultHeaders(provider),
         authorization: `Bearer ${await accessToken(label)}`,
         ...(opts.body !== undefined && !(opts.body instanceof Uint8Array) ? { "content-type": "application/json" } : {}),
         ...opts.headers,
@@ -41,20 +69,43 @@ export async function api(label: string, provider: Provider, url: string, opts: 
             : JSON.stringify(opts.body),
     });
 
-  let r = await send();
-  if (r.status === 401) {
-    invalidate(label);
-    r = await send();
-  }
-  const text = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText} from ${u.hostname}${u.pathname}: ${text.slice(0, 2000)}`);
+  const fetchOnce = async (u: URL) => {
+    let r = await send(u);
+    if (r.status === 401) {
+      invalidate(label);
+      r = await send(u);
+    }
+    const text = await r.text();
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText} from ${u.hostname}${u.pathname}: ${text.slice(0, 2000)}`);
+    return { r, text };
+  };
+
+  let { r, text } = await fetchOnce(first);
   if (opts.raw) return text;
-  if (!text) return { ok: true };
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+  const parse = (t: string) => {
+    if (!t) return { ok: true };
+    try {
+      return JSON.parse(t);
+    } catch {
+      return t;
+    }
+  };
+  let result = parse(text);
+
+  // Pagination: only for GET collections that return arrays (or {items|workflow_runs|...: []} are left to callers)
+  if (opts.pages && opts.pages > 1 && Array.isArray(result)) {
+    for (let i = 1; i < opts.pages; i++) {
+      const next = nextLink(r);
+      if (!next) break;
+      const nu = new URL(next);
+      checkHost(provider, label, nu); // never follow a Link header off-host with the bearer token
+      ({ r, text } = await fetchOnce(nu));
+      const more = parse(text);
+      if (!Array.isArray(more)) break;
+      result = result.concat(more);
+    }
   }
+  return result;
 }
 
 export function out(data: unknown) {

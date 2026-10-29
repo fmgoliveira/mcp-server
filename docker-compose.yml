@@ -5,21 +5,7 @@ services:
     env_file: .env
     volumes:
       - mcp-data:/data
-    expose:
-      - "3000"
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - mcp
+      - "3000:3000"
 volumes:
   mcp-data:
-  caddy-data:
-  caddy-config:

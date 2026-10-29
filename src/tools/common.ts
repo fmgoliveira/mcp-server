@@ -64,7 +64,7 @@ export function registerCommon(server: McpServer) {
   tool(
     server,
     "list_accounts",
-    "List connected Google and Microsoft 365 accounts (labels, providers, emails). Use the label as the `account` argument of other tools.",
+    "List connected accounts (Google, Microsoft 365, Canva, GitHub): labels, providers, emails/usernames. Use the label as the `account` argument of other tools.",
     {},
     async () =>
       listAccounts().map((a) => ({ label: a.label, provider: a.provider, email: a.email, addedAt: a.addedAt })),

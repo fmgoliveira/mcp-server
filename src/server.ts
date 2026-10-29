@@ -9,12 +9,16 @@ import { confirmAuthorize, provider } from "./auth-provider.js";
 import { registerCommon } from "./tools/common.js";
 import { registerGoogle } from "./tools/google.js";
 import { registerMicrosoft } from "./tools/microsoft.js";
+import { registerCanva } from "./tools/canva.js";
+import { registerGithub } from "./tools/github.js";
 
 function buildServer(): McpServer {
   const s = new McpServer({ name: "multi-account", version: "0.1.0" });
   registerCommon(s);
   registerGoogle(s);
   registerMicrosoft(s);
+  registerCanva(s);
+  registerGithub(s);
   return s;
 }
 
@@ -26,7 +30,7 @@ const issuerUrl = new URL(config.publicUrl);
 const mcpUrl = new URL(`${config.publicUrl}/mcp`);
 
 // OAuth endpoints for Claude (metadata, /register, /authorize, /token, /revoke)
-app.use(mcpAuthRouter({ provider, issuerUrl, resourceServerUrl: mcpUrl, resourceName: "Multi-account Google + Microsoft" }));
+app.use(mcpAuthRouter({ provider, issuerUrl, resourceServerUrl: mcpUrl, resourceName: "Multi-account Google + Microsoft + Canva + GitHub" }));
 app.post("/authorize/confirm", confirmAuthorize);
 
 app.use(admin);

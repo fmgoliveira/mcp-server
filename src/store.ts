@@ -3,13 +3,16 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.js";
 
-export type Provider = "google" | "microsoft";
+export type OAuthProvider = "google" | "microsoft" | "canva" | "github";
+export type Provider = OAuthProvider;
+export const PROVIDERS: readonly Provider[] = ["google", "microsoft", "canva", "github"];
 
 export interface Account {
   label: string; // user-chosen short name, e.g. "work"
   provider: Provider;
   email: string;
-  refreshToken: string;
+  refreshToken?: string; // rotating refresh token (all providers except a non-expiring GitHub OAuth App token)
+  token?: string; // non-expiring access token (GitHub OAuth App only; GitHub App tokens use refreshToken)
   scopes: string;
   addedAt: string;
 }
