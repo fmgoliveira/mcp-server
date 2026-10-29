@@ -8,7 +8,7 @@ an `account` label; list/search tools fan out over all accounts of that provider
 - `npm run dev` – run with tsx, loading `.env` via `--env-file` (the app does not read `.env` itself; Docker injects it via `env_file`)
 - `npm run build` – `tsc` to `dist/` (this is also the typecheck; there are no tests or linter)
 - `npm start` – run the built server
-- `docker compose up -d --build` – production (publishes port 5757, bind-mounts `./data` to `/data`; put your own reverse proxy in front; the host dir must be writable by uid 1000)
+- `docker compose up -d --build` – production (publishes port 5757, bind-mounts `./data` to `/data`; put your own reverse proxy in front; the entrypoint chowns it to `node` then drops root)
 
 ## Architecture (`src/`)
 - `server.ts` – Express app. `mcpAuthRouter` exposes OAuth 2.1 for **Claude → this server**; `POST /mcp`

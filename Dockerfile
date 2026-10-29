@@ -11,7 +11,9 @@ ENV NODE_ENV=production DATA_DIR=/data PORT=3000
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-RUN mkdir -p /data && chown node:node /data
+RUN apk add --no-cache su-exec && mkdir -p /data && chown node:node /data
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 VOLUME /data
-USER node
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/server.js"]
