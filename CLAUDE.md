@@ -14,8 +14,15 @@ an `account` label; list/search tools fan out over all accounts of that provider
 - `server.ts` – Express app. `mcpAuthRouter` exposes OAuth 2.1 for **Claude → this server**; `POST /mcp`
   is bearer-protected and builds a fresh stateless `McpServer` per request, calling every `register*`.
 - `auth-provider.ts` – the MCP OAuth provider (dynamic client registration, PKCE). Approval = admin password.
-- `admin.ts` – `/admin` UI (session cookie): add/remove accounts, OAuth callbacks
-  (`/oauth/<google|microsoft|canva>/callback`), (modern single-file UI, light/dark, no client-side framework).
+- `admin.ts` – `/admin` UI (session cookie), server-rendered, three pages: Accounts (`/admin`, grouped by service),
+  Add account (`/admin/add`, OAuth or pasted token in one form) and OAuth apps (`/admin/apps`); plus the provider callbacks
+  (`/oauth/<provider>/callback`). Errors render as styled pages; flash messages are looked up by key (`?msg=`), never reflected.
+- `ui.ts` – shared HTML: `esc`, `META` (provider names/colours), `shell` (signed-in layout), `gate` (centered pages: sign in,
+  authorize, results). `auth-provider.ts` renders the Claude authorization page with `gate` (it must not reveal account data:
+  it is shown before the password is checked; the client name is self-reported, so always `esc()` it).
+- `public/` – served statically by `server.ts`: favicon (svg/ico/apple-touch), `assets/ui.css` (light/dark tokens, no
+  external fonts) and `assets/admin.js` (copy buttons, menus, filter, add-account form logic). CSP forbids inline scripts, so
+  behaviour goes in `admin.js` and uses `data-*` attributes (`data-confirm`, `data-copy`, `data-show`). The Dockerfile copies `public/`.
 - `store.ts` – single AES-256-GCM encrypted state file (`DATA_DIR/state.enc`): accounts, OAuth app credentials (client id/secret), MCP clients, tokens. `listCredentials()`/`getCredential()` merge the `.env` client (id `env`) with those added in /admin.
   `Provider = OAuthProvider = "google" | "microsoft" | "canva" | "github"`; all providers use OAuth.
 - `providers.ts` – Google/Microsoft/Canva/GitHub OAuth connect + refresh (`accessToken(label)`; Canva uses PKCE + Basic

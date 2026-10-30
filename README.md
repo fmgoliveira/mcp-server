@@ -1,92 +1,205 @@
-# Multi-account MCP server (Google, Microsoft 365, Canva, GitHub)
+# Multi-account MCP
 
-One remote MCP server that gives Claude access to **several Google, Microsoft 365, Canva and GitHub accounts at once**.
-Add it to Claude as a single custom connector; every tool takes an `account` label, and the search/list
-tools fan out across all accounts when you omit it.
+[![CI](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0b6b5c.svg)](LICENSE)
 
-- Read + write: Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms (Google); Outlook mail, Calendar,
-  OneDrive/SharePoint files, Excel ranges (Microsoft); plus `google_api` / `graph_api` escape hatches.
-- Canva (`canva_*`): search/list designs, design details, create designs, export (PDF/PNG/PPTX/…), folders,
-  asset upload from URL, brand templates + autofill (Enterprise); `canva_api` escape hatch.
-- GitHub (`github_*`): repos, search, my work (assigned/review-requested/…), notifications, read/write files,
-  commits, Actions runs, issues, pull requests (read, diff, create, review, merge); `github_api` escape hatch.
-- Teams (`teams_*`, Microsoft accounts): joined teams, channels, channel + chat messages, send. Opt-in: set `MS_TEAMS=1`
-  and reconnect that account (channel reads need tenant admin consent). Other accounts keep working without it.
-- API-token services, added in `/admin` → API tokens (no OAuth app): GitLab (`gitlab_*`, self-hosted via base URL),
-  Cloudflare (`cloudflare_*`, zones + DNS), Discord (`discord_*`, bot token), Figma (`figma_*`); each has an `*_api`
-  escape hatch. GitHub also accepts a PAT there (one per org when OAuth app approval isn't possible).
-- Claude → server auth: OAuth 2.1 (dynamic client registration, PKCE), approved with your admin password.
-- Account tokens: stored AES-256-GCM encrypted in `DATA_DIR/state.enc`.
-- Not available: Microsoft Forms (no public API); Word/PowerPoint get text extraction on read, but no
-  structured editing (upload a replacement file instead).
+A self-hosted [MCP](https://modelcontextprotocol.io) server that lets Claude use **several accounts per service at the same
+time**: two Google accounts, a work and a personal GitHub, three Canva teams. You add it to Claude once as a custom
+connector. Every tool takes an `account` label, and list and search tools fan out over all accounts when you leave it out.
 
-## 1. Google Cloud (once, for all 3 accounts)
-1. console.cloud.google.com → new project → enable APIs: Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms.
-2. OAuth consent screen → External. Add every account you'll connect as a test user, **then publish the app
-   ("In production")**. Apps left in "Testing" get refresh tokens that expire after 7 days. Unverified
-   production apps work for up to 100 users; you'll click through a "Google hasn't verified this app" warning.
-   (If all accounts belong to one Workspace org you can choose "Internal" and skip this.)
-3. Credentials → OAuth client ID → Web application → redirect URI `https://YOUR_HOST/oauth/google/callback`.
-4. Put the client id/secret in `.env`.
+<p align="center">
+  <img src="docs/screenshots/admin-accounts.png" width="49%" alt="Accounts page of the admin UI">
+  <img src="docs/screenshots/authorize.png" width="49%" alt="Authorization page shown when Claude connects">
+</p>
 
-## 2. Microsoft Entra (once, for both accounts)
-1. entra.microsoft.com → App registrations → New → supported account types:
-   **Accounts in any organizational directory and personal Microsoft accounts**.
-2. Redirect URI (Web): `https://YOUR_HOST/oauth/microsoft/callback`.
-3. Certificates & secrets → new client secret. Put id/secret in `.env`.
-4. Work/school tenants may require **admin consent** for `Files.ReadWrite.All` / `Sites.ReadWrite.All`.
-   If you can't get it, set `MS_SCOPES="offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.ReadWrite"`.
+## What it can do
 
-## 2c. GitHub (once, for all accounts)
-Recommended: a **GitHub App** (Settings → Developer settings → GitHub Apps → New).
-1. Callback URL `https://YOUR_HOST/oauth/github/callback`; keep "Expire user authorization tokens" on; uncheck Webhook.
-2. Repository permissions: Contents RW, Issues RW, Pull requests RW, Actions R, Metadata R (+ Commit statuses/Checks R if wanted). Account permissions: none needed.
-3. Generate a client secret; put id/secret in `.env` (`GITHUB_CLIENT_ID/SECRET`).
-4. **Install the app** on each user/org whose repos Claude should see (App page → Install). User tokens only reach repos where the app is installed *and* the user has access.
-5. Connect each GitHub account from `/admin`. Tokens expire after 8h and are refreshed automatically.
+| Service | Connect with | Tools |
+|---|---|---|
+| Google | OAuth | Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, plus `google_api` |
+| Microsoft 365 | OAuth | Outlook mail and calendar, OneDrive and SharePoint files, Excel ranges, plus `graph_api` |
+| Teams (optional) | Microsoft OAuth | Teams, channels, channel and chat messages, sending |
+| Canva | OAuth (PKCE) | Designs, create, export, folders, assets, brand templates and autofill, plus `canva_api` |
+| GitHub | GitHub App, OAuth App or token | Repos, search, your work, notifications, files, commits, Actions, issues, pull requests, plus `github_api` |
+| GitLab | API token (self-hosted works) | Projects, merge requests, issues, pipelines, plus `gitlab_api` |
+| Cloudflare | API token | Zones and DNS records, plus `cloudflare_api` |
+| Discord | Bot token | Servers, channels, read and send messages, plus `discord_api` |
+| Figma | API token | Files, projects, comments, image export, plus `figma_api` |
 
-Limitation: GitHub Apps cannot read **notifications** (`github_notifications` fails). If you need that, use a classic
-**OAuth App** instead (same callback URL) and set `GITHUB_SCOPES="repo read:user notifications"`; its tokens do not expire.
+Read-only tools are annotated as such, so Claude can auto-allow reads and ask before anything that sends, edits or
+deletes. Every service has an `*_api` escape hatch for calls that don't have a dedicated tool yet.
+Not available: Microsoft Forms (no public API). Word and PowerPoint files are read as text but not edited in place.
 
-## 2d. API tokens (GitLab, Cloudflare, Discord, Figma, GitHub PAT)
-Create a token on each service, then paste it in `/admin` → API tokens with a label. It is verified and stored encrypted.
-- GitLab: token with `api` scope; set the base URL only for self-hosted. Cloudflare: scoped API token (Zone:Read, DNS:Edit).
-- Discord: a **bot** token; invite the bot to the server and enable the Message Content intent to read messages.
-- Figma: personal access token (file content + comments). Tokens don't refresh: re-add the label when one expires.
+## Quick start
 
-## 3. Deploy on the VM
+You need a machine with Docker and a public HTTPS hostname that points at it.
+
 ```bash
-cp .env.example .env     # fill in; generate secrets:
-openssl rand -base64 32  # -> ENCRYPTION_KEY
-openssl rand -base64 24  # -> ADMIN_PASSWORD
-# set PUBLIC_URL=https://your-hostname in .env (TLS/reverse proxy is yours; point it at port 3000)
+git clone https://github.com/fmgoliveira/mcp-server && cd mcp-server
+cp .env.example .env
+openssl rand -base64 32   # paste as ENCRYPTION_KEY
+openssl rand -base64 24   # paste as ADMIN_PASSWORD
+# set PUBLIC_URL=https://your-hostname in .env
 docker compose up -d --build
 ```
-State lives in the bind-mounted `./data` folder (the container fixes its ownership on startup). Back up `./data` **and** keep `ENCRYPTION_KEY`; without the key the state can't be read.
 
-## 4. Link your accounts
-Open `https://YOUR_HOST/admin`, sign in, then for each account pick a provider tile and a label (e.g. `work`, `ninf`,
-`sinformania`, `m365-a`) and provider, and complete the consent screen. Use a private window or the
-account chooser to pick the right identity each time.
+The container listens on port 5757 of the host. Put a reverse proxy with TLS in front of it and forward your hostname to
+`127.0.0.1:5757`. The included `Caddyfile` is a starting point if you run Caddy in the same compose network.
 
-## 2b. Canva (once, for all accounts)
-1. canva.com/developers → Your integrations → Create integration (private). Enable the scopes: `profile:read`,
-   `design:meta:read`, `design:content:read`, `design:content:write`, `asset:read`, `asset:write`,
-   `folder:read`, `folder:write` (+ `brandtemplate:*:read` on Enterprise).
-2. Redirect URL: `https://YOUR_HOST/oauth/canva/callback`. Copy client id/secret into `.env` (`CANVA_CLIENT_ID/SECRET`).
-3. Connect each Canva account from `/admin` (use a private window to pick the right identity). Canva
-   private integrations may be limited to your own team; check Canva's docs if connecting a different account fails.
+Then:
 
-## 5. Add to Claude
-Claude → Settings → Connectors → Add custom connector → URL `https://YOUR_HOST/mcp`.
-Claude opens the approval page; enter the admin password. Then try: *"List my connected accounts"*, *"Export my latest Canva design as PDF"*, *"Which PRs need my review?"*,
-*"Search all accounts for emails from X this week"*.
+1. Open `https://your-hostname/admin` and sign in with `ADMIN_PASSWORD`.
+2. Create an OAuth app for each OAuth service you want ([setup guides](#provider-setup)) and save it under **OAuth apps**.
+3. Under **Add account**, pick a service, choose a short label such as `work`, and finish the consent screen. API-token
+   services only need a pasted token.
+4. In Claude, go to **Settings → Connectors → Add custom connector** and enter `https://your-hostname/mcp`. Approve the
+   connection with your admin password when Claude opens the authorization page.
+5. Try *"List my connected accounts"*, *"Which pull requests need my review?"* or *"Search all my inboxes for the invoice
+   from Acme"*.
 
-## Notes
-- Tool annotations mark read-only tools, so Claude can auto-allow reads while asking before sends/edits/deletes.
-- Rotate access: remove an account in `/admin`, or revoke the app in the Google/Microsoft account security page.
-- Anyone with the admin password can connect a client to this server. Use a long random one.
+<p align="center"><img src="docs/screenshots/admin-add.png" width="70%" alt="Add account page"></p>
 
-## Multiple OAuth apps per provider
+## Configuration
 
-Client ID/secret can be added in `/admin` → **OAuth apps** (secrets are stored inside the encrypted state file), in addition to or instead of the `.env` values. Pick the app when connecting an account. Useful for Canva: a draft/public integration only authorizes its owner, so create one integration per Canva account and add each here. Every app needs the same redirect URL (`${PUBLIC_URL}/oauth/<provider>/callback`).
+Everything is set through environment variables (see [`.env.example`](.env.example)). OAuth client IDs and secrets can also
+be added in **/admin → OAuth apps**, which is handy when you need several apps for one service.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `PUBLIC_URL` | yes | Public HTTPS URL of the server, without a trailing slash. Used for OAuth redirects. |
+| `ADMIN_PASSWORD` | yes | Unlocks `/admin` and approves new MCP clients. Use a long random value. |
+| `ENCRYPTION_KEY` | yes | 32 random bytes, base64. Encrypts everything stored on disk. Losing it makes the state unreadable. |
+| `GOOGLE_CLIENT_ID` / `_SECRET` | no | Default Google OAuth client. |
+| `MS_CLIENT_ID` / `_SECRET` | no | Default Microsoft Entra app. |
+| `CANVA_CLIENT_ID` / `_SECRET` | no | Default Canva integration. |
+| `GITHUB_CLIENT_ID` / `_SECRET` | no | Default GitHub App or OAuth App. |
+| `GOOGLE_SCOPES`, `MS_SCOPES`, `CANVA_SCOPES`, `GITHUB_SCOPES` | no | Override the requested scopes (space separated). |
+| `MS_TEAMS` | no | Set to `1` to request Teams scopes. Reconnect the Microsoft accounts that need Teams. |
+| `PORT` | no | Listening port, default `3000` (the container publishes it as 5757). |
+| `DATA_DIR` | no | Where `state.enc` is stored, default `./data`. |
+
+State lives in the bind-mounted `./data` folder. Back it up, and keep `ENCRYPTION_KEY` somewhere separate.
+
+## Provider setup
+
+Every OAuth redirect URL has the form `https://your-hostname/oauth/<service>/callback`. The **OAuth apps** page lists them
+with a copy button.
+
+<details>
+<summary><b>Google</b></summary>
+
+1. In [Google Cloud Console](https://console.cloud.google.com), create a project and enable the Gmail, Calendar, Drive,
+   Docs, Sheets, Slides and Forms APIs.
+2. Configure the OAuth consent screen as **External** and add each account you will connect as a test user. Then
+   **publish the app** ("In production"). Apps left in "Testing" get refresh tokens that expire after 7 days. Unverified
+   production apps work for up to 100 users and show a "Google hasn't verified this app" warning. If all accounts belong
+   to one Workspace organization, choose **Internal** instead.
+3. Create an OAuth client ID of type *Web application* with the redirect URI `https://your-hostname/oauth/google/callback`.
+</details>
+
+<details>
+<summary><b>Microsoft 365</b></summary>
+
+1. In [Microsoft Entra](https://entra.microsoft.com) → App registrations, create an app that supports **accounts in any
+   organizational directory and personal Microsoft accounts**.
+2. Add the Web redirect URI `https://your-hostname/oauth/microsoft/callback` and create a client secret.
+3. Work and school tenants may require admin consent for `Files.ReadWrite.All` and `Sites.ReadWrite.All`. If you can't get
+   it, set `MS_SCOPES="offline_access User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.ReadWrite"`.
+4. Teams is opt-in: set `MS_TEAMS=1` and reconnect the account. Reading channel messages needs tenant admin consent.
+</details>
+
+<details>
+<summary><b>Canva</b></summary>
+
+1. At [canva.com/developers](https://www.canva.com/developers) create a private integration and enable the scopes
+   `profile:read`, `design:meta:read`, `design:content:read`, `design:content:write`, `asset:read`, `asset:write`,
+   `folder:read`, `folder:write` (plus `brandtemplate:meta:read` and `brandtemplate:content:read` on Enterprise).
+2. Set the redirect URL to `https://your-hostname/oauth/canva/callback`.
+3. Draft and private integrations only authorize their owner. For several Canva accounts, create one integration per
+   account and add each under **OAuth apps**.
+</details>
+
+<details>
+<summary><b>GitHub</b></summary>
+
+Recommended: a **GitHub App** (Settings → Developer settings → GitHub Apps).
+
+1. Set the callback URL to `https://your-hostname/oauth/github/callback`, keep "Expire user authorization tokens" on and
+   turn webhooks off.
+2. Repository permissions: Contents (read and write), Issues (read and write), Pull requests (read and write), Actions
+   (read), Metadata (read).
+3. Generate a client secret and save the app under **OAuth apps**.
+4. **Install the app** on every user or organization whose repositories Claude should see. User tokens only reach
+   repositories where the app is installed and you have access.
+
+GitHub Apps can't read notifications. For those, use a classic **OAuth App** with the same callback URL and
+`GITHUB_SCOPES="repo read:user notifications"`. Its tokens don't expire. A personal access token (one per organization) also
+works: add it under **Add account → GitHub token**.
+</details>
+
+<details>
+<summary><b>GitLab, Cloudflare, Discord, Figma (API tokens)</b></summary>
+
+Create a token on the service and paste it under **Add account**. It is verified against the service and stored encrypted.
+
+- **GitLab:** a personal or group access token with the `api` scope. Set the base URL for self-hosted instances.
+- **Cloudflare:** an API token scoped to the zones you need (Zone:Read, DNS:Edit).
+- **Discord:** a bot token. Invite the bot to your server and enable the Message Content intent to read messages.
+- **Figma:** a personal access token with file content and comments access.
+
+Tokens don't refresh. When one expires, add the same label again with a new token.
+</details>
+
+## Security
+
+- All accounts, OAuth app secrets and tokens are stored in one AES-256-GCM encrypted file, `data/state.enc`.
+- Claude authenticates to this server with OAuth 2.1 (dynamic client registration, PKCE). Approving a client needs the
+  admin password, and failed attempts are rate limited.
+- Tool calls can only reach an allowlist of upstream hosts, so a stored token is never sent anywhere else.
+- Anyone with the admin password can connect a client that can use **every** account. Use a long random password, serve
+  over HTTPS only, and run one instance per group of people who trust each other.
+
+See [SECURITY.md](SECURITY.md) for the full model, a hardening checklist and how to report a vulnerability.
+
+## Development
+
+```bash
+npm install
+cp .env.example .env
+npm run dev      # tsx with .env loaded, http://localhost:3000/admin
+npm run build    # compiles to dist/ and doubles as the typecheck
+npm start        # runs the built server
+```
+
+```
+src/
+  server.ts          Express app, OAuth endpoints for Claude, /mcp, security headers
+  auth-provider.ts   MCP OAuth provider and the authorization page
+  admin.ts, ui.ts    Admin UI (server-rendered) and shared HTML pieces
+  store.ts           Encrypted state: accounts, OAuth apps, MCP clients, tokens
+  providers.ts       OAuth connect and token refresh per service
+  tokens.ts          API-token verification
+  api.ts             The only place that calls upstream APIs (allowlist, retry, truncation)
+  tools/             One file per service, each exposing registerX(server)
+public/              Favicon and the admin UI's stylesheet and script
+```
+
+More detail for contributors, including how to add a provider, is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Roadmap
+
+Ideas that would make this more useful. Open an issue if one matters to you.
+
+- A **Test connection** button and status on each account, with warnings for expiring tokens
+- Per-account **read-only mode** and per-tool switches, so a work account can be locked to reads
+- An **activity log** of tool calls (time, account, tool, result) in the admin UI
+- A list of connected **Claude clients** with revoke
+- Account **groups and defaults**, for example "all work accounts"
+- Passkey or TOTP sign-in for the admin UI
+- More services: Slack, Notion, Linear, Atlassian, Dropbox
+- Encrypted export and import of the state file, and an `ENCRYPTION_KEY` rotation command
+- Automated tests
+
+## License
+
+[MIT](LICENSE)

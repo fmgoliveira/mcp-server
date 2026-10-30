@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Multi-account MCP</title>
+  <rect width="64" height="64" rx="14" fill="#0b3d36"/>
+  <g fill="none" stroke="#7ee2cc" stroke-width="3.5" stroke-linecap="round">
+    <path d="M15 17C31 17 31 32 46 32"/>
+    <path d="M15 32H46"/>
+    <path d="M15 47C31 47 31 32 46 32"/>
+  </g>
+  <g fill="#7ee2cc">
+    <circle cx="15" cy="17" r="4.5"/>
+    <circle cx="15" cy="32" r="4.5"/>
+    <circle cx="15" cy="47" r="4.5"/>
+  </g>
+  <circle cx="47" cy="32" r="7.5" fill="#ffb547"/>
+</svg>

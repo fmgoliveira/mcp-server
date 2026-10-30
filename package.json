@@ -2,6 +2,27 @@
   "name": "multi-account-mcp",
   "version": "0.1.0",
   "private": true,
+  "description": "Self-hosted MCP server that lets Claude use several Google, Microsoft 365, Canva, GitHub and other accounts at once.",
+  "license": "MIT",
+  "author": "fmgoliveira",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fmgoliveira/mcp-server.git"
+  },
+  "homepage": "https://github.com/fmgoliveira/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/fmgoliveira/mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "oauth",
+    "google",
+    "microsoft-365",
+    "github",
+    "self-hosted"
+  ],
   "type": "module",
   "scripts": {
     "build": "tsc",

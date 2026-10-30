@@ -10,6 +10,7 @@ WORKDIR /app
 ENV NODE_ENV=production DATA_DIR=/data PORT=3000
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY public ./public
 COPY package.json ./
 RUN apk add --no-cache su-exec && mkdir -p /data && chown node:node /data
 COPY docker-entrypoint.sh /usr/local/bin/
