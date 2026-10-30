@@ -47,6 +47,7 @@ const FLASH: Record<string, string> = {
   tested: "Connection test finished.",
   "tested-all": "Connection tests finished.",
   revoked: "Client revoked. It has to be approved again to reconnect.",
+  cleaned: "Clients without a session removed.",
   cleared: "Activity log cleared.",
   restored: "Backup restored.",
   "2fa-off": "Two-step sign-in is off.",
@@ -61,8 +62,9 @@ export const page = (res: Response, active: NavKey, title: string, body: string)
 export const fail = (res: Response, status: number, title: string, message: string, back = { href: "/admin", text: "Back to accounts" }) =>
   res.status(status).type("html").send(errorGate(title, message, back));
 
+/** Title and subtitle; `actions` (search, buttons) go in a toolbar row underneath. */
 export const header = (title: string, lede: string, actions = "") =>
-  `<div class=page-head><div><h1>${title}</h1><p class=lede>${lede}</p></div>${actions}</div>`;
+  `<div class=page-head><h1>${title}</h1><p class=lede>${lede}</p></div>${actions ? `<div class=toolbar>${actions}</div>` : ""}`;
 
 export function ago(t: number, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - t) / 1000));

@@ -5,7 +5,7 @@ import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/serv
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { config } from "./config.js";
-import { getState, save } from "./store.js";
+import { getState, save, saveSoon } from "./store.js";
 import { errorGate, esc, gate } from "./ui.js";
 import { checkSecondFactor, totpEnabled } from "./security.js";
 
@@ -80,6 +80,11 @@ ${totpEnabled() ? `<label class=field-label for=code style="margin-top:14px">Aut
 const clientsStore: OAuthRegisteredClientsStore = {
   getClient: (id) => getState().clients[id],
   registerClient: (client) => {
+    // Claude registers afresh every time the connector is (re-)added. For public clients with identical metadata, hand back
+    // the existing entry instead of piling up duplicates.
+    const uris = JSON.stringify([...(client.redirect_uris ?? [])].map(String).sort());
+    const twin = !(client as any).client_secret && Object.values(getState().clients).find((c: any) => !c.client_secret && c.client_name === client.client_name && JSON.stringify([...(c.redirect_uris ?? [])].map(String).sort()) === uris);
+    if (twin) return twin as OAuthClientInformationFull;
     const full = {
       ...client,
       client_id: rand(),
@@ -152,6 +157,11 @@ export const provider: OAuthServerProvider = {
     prune();
     const a = getState().access[token];
     if (!a) throw new Error("Invalid token");
+    const c = getState().clients[a.clientId];
+    if (c && Date.now() - (c.last_used ?? 0) > 60_000) {
+      c.last_used = Date.now();
+      saveSoon();
+    }
     return { token, clientId: a.clientId, scopes: [], expiresAt: Math.floor(a.expires / 1000) };
   },
 

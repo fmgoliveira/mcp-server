@@ -1,6 +1,20 @@
 // Shared HTML building blocks for the admin UI and the authorization page.
 // Styles and behaviour live in public/assets (ui.css, admin.js); nothing is loaded from third parties.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Provider } from "./store.js";
+
+// The stylesheet and script are fingerprinted so a browser (or a CDN in front of the server) never pairs new HTML with old assets.
+const assetVersion = (() => {
+  try {
+    const h = createHash("sha1");
+    for (const f of ["ui.css", "admin.js"]) h.update(readFileSync(fileURLToPath(new URL(`../public/assets/${f}`, import.meta.url))));
+    return h.digest("hex").slice(0, 8);
+  } catch {
+    return "0";
+  }
+})();
 
 export const REPO_URL = "https://github.com/fmgoliveira/mcp-server";
 
@@ -43,7 +57,7 @@ const head = (title: string, script: boolean) => `<!doctype html><html lang=en><
 <title>${esc(title)}</title>
 <link rel=icon href=/favicon.svg type=image/svg+xml><link rel=icon href=/favicon.ico sizes=any>
 <link rel=apple-touch-icon href=/apple-touch-icon.png>
-<link rel=stylesheet href=/assets/ui.css>${script ? "<script src=/assets/admin.js defer></script>" : ""}`;
+<link rel=stylesheet href="/assets/ui.css?v=${assetVersion}">${script ? `<script src="/assets/admin.js?v=${assetVersion}" defer></script>` : ""}`;
 
 export type NavKey = "accounts" | "activity" | "tools" | "clients" | "settings";
 

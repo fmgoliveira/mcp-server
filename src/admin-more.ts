@@ -71,7 +71,8 @@ adminMore.get("/admin/activity", guard, (req, res) => {
   const rows = all.filter((e) => (f === "failed" ? !e.ok && !e.blocked : f === "blocked" ? e.blocked : true)).slice(0, 200);
   const clients = Object.values(getState().clients) as any[];
   const manyClients = new Set(all.map((e) => e.client).filter(Boolean)).size > 1;
-  const chip = (key: string, text: string) => `<a class="chip" href="/admin/activity${key === "all" ? "" : `?show=${key}`}"${f === key ? " aria-current=true" : ""}>${text}</a>`;
+  const count = (key: string) => (key === "failed" ? all.filter((e) => !e.ok && !e.blocked).length : key === "blocked" ? all.filter((e) => e.blocked).length : all.length);
+  const tab = (key: string, text: string) => `<a class=tab href="/admin/activity${key === "all" ? "" : `?show=${key}`}"${f === key ? " aria-current=page" : ""}>${text}<span class=n>${count(key)}</span></a>`;
   const list = rows
     .map((e) => {
       const who = manyClients && e.client ? clients.find((c) => String(c.client_id).startsWith(e.client!))?.client_name : undefined;
@@ -82,9 +83,9 @@ adminMore.get("/admin/activity", guard, (req, res) => {
 <span class=when title="${esc(new Date(e.t).toISOString())}">${esc(ago(e.t))}<small>${e.ms} ms</small></span></li>`;
     })
     .join("");
-  const clear = all.length ? `<form method=post action=/admin/activity/clear data-confirm="Clear the whole activity log?"><button class=btn>${icon.trash}Clear log</button></form>` : "";
-  const body = `${flash(req)}${header("Activity", "The last 500 tool calls: what ran, on which account, and whether it worked. Arguments and results are never recorded.", clear)}
-<div class=chips>${chip("all", "All")}${chip("failed", "Failed")}${chip("blocked", "Blocked")}</div>
+  const clear = all.length ? `<form method=post action=/admin/activity/clear data-confirm="Clear the whole activity log?"><button class="btn btn-quiet">${icon.trash}Clear log</button></form>` : "";
+  const body = `${flash(req)}${header("Activity", "The last 500 tool calls: what ran, on which account, and whether it worked. Arguments and results are never recorded.")}
+<nav class=tabs aria-label="Filter activity">${tab("all", "All")}${tab("failed", "Failed")}${tab("blocked", "Blocked")}<span class=grow></span>${clear}</nav>
 ${list ? `<ul class=list>${list}</ul>` : `<div class=empty><h2>${all.length ? "Nothing matches" : "No activity yet"}</h2><p>${all.length ? "Try another filter." : "Calls appear here as soon as Claude uses a tool."}</p></div>`}`;
   page(res, "activity", "Activity", body);
 });
@@ -134,14 +135,18 @@ adminMore.post("/admin/tools", guard, (req, res) => {
 // ---------- connected clients ----------
 adminMore.get("/admin/clients", guard, (req, res) => {
   const clients = listClients();
+  const idle = clients.filter((c) => c.sessions === 0);
   const rows = clients
     .map(
-      (c) => `<li class=item><div class=main><div class=label-row><b>${esc(c.name)}</b><span class=tag>${esc(c.id.slice(0, 8))}</span></div>
-<div class=sub style="white-space:normal">${c.redirectHosts.map(esc).join(", ") || "no redirect"} · ${c.lastUsed ? `last used ${esc(ago(c.lastUsed))}` : "never used"} · approved ${c.issuedAt ? esc(ago(c.issuedAt)) : "earlier"} · ${c.sessions} active session${c.sessions === 1 ? "" : "s"}</div></div>
+      (c) => `<li class=item><div class=main><div class=label-row><b>${esc(c.name)}</b><span class=tag title="Client id">${esc(c.id.slice(0, 8))}</span>${c.sessions === 0 ? `<span class="tag tag-warn" title="No refresh token: it has to be approved again before it can connect">no session</span>` : ""}</div>
+<div class=sub style="white-space:normal">${c.redirectHosts.map(esc).join(", ") || "no redirect"} · ${c.lastUsed ? `last used ${esc(ago(c.lastUsed))}` : "not used yet"} · approved ${c.issuedAt ? esc(ago(c.issuedAt)) : "earlier"}${c.sessions ? ` · ${c.sessions} active session${c.sessions === 1 ? "" : "s"}` : ""}</div></div>
 <form method=post action=/admin/clients/revoke data-confirm="Revoke ${esc(c.name)}? It loses access immediately."><input type=hidden name=id value="${esc(c.id)}"><button class="btn btn-danger">${icon.trash}Revoke</button></form></li>`,
     )
     .join("");
-  const body = `${flash(req)}${header("Clients", "Apps that were approved to use this server. Revoking one signs it out at once; it has to be approved again with your admin password.")}
+  const cleanup = idle.length
+    ? `<span class=grow></span><form method=post action=/admin/clients/cleanup data-confirm="Remove ${idle.length} client${idle.length === 1 ? "" : "s"} without an active session?"><button class=btn>${icon.trash}Remove ${idle.length} without a session</button></form>`
+    : "";
+  const body = `${flash(req)}${header("Clients", "Apps approved to use this server. Revoking one signs it out at once. Claude adds an entry each time you re-add the connector, so old ones can pile up.", cleanup)}
 ${rows ? `<ul class=list>${rows}</ul>` : `<div class=empty><h2>No clients yet</h2><p>Add <code>${esc(mcpUrl)}</code> as a custom connector in Claude to see it here.</p></div>`}`;
   page(res, "clients", "Clients", body);
 });
@@ -149,6 +154,11 @@ ${rows ? `<ul class=list>${rows}</ul>` : `<div class=empty><h2>No clients yet</h
 adminMore.post("/admin/clients/revoke", guard, (req, res) => {
   revokeClient(String(req.body?.id ?? ""));
   res.redirect("/admin/clients?msg=revoked");
+});
+
+adminMore.post("/admin/clients/cleanup", guard, (_req, res) => {
+  for (const c of listClients()) if (c.sessions === 0) revokeClient(c.id);
+  res.redirect("/admin/clients?msg=cleaned");
 });
 
 // ---------- settings: two-step sign-in, backup, key rotation ----------
@@ -166,9 +176,9 @@ adminMore.get("/admin/settings", guard, (req, res) => {
 <form method=post action=/admin/backup/export class=inline-form><input type=password name=passphrase placeholder="Passphrase (8+ characters)" minlength=8 autocomplete=new-password required><button class=btn>${icon.download}Download backup</button></form>
 <details class=sub-details><summary>Restore from a backup</summary>
 <form method=post action=/admin/backup/import data-confirm="Replace all accounts, OAuth apps and settings with the backup?">
-<div class=field><label class=field-label for=bfile>Backup file</label><input id=bfile type=file data-fill=backup><p class=hint>Or paste its contents below.</p></div>
-<div class=field><textarea name=backup id=backup rows=3 class=mono required></textarea></div>
-<div class=field><label class=field-label for=bpass>Passphrase</label><input id=bpass type=password name=passphrase autocomplete=off required></div>
+<div class=field><label class=field-label for=bfile>Backup file</label><input id=bfile type=file data-fill=backup accept=".txt,text/plain"></div>
+<div class=field><label class=field-label for=backup>Or paste its contents</label><textarea name=backup id=backup rows=4 spellcheck=false required></textarea></div>
+<div class=field><label class=field-label for=bpass>Passphrase</label><input id=bpass class=narrow type=password name=passphrase autocomplete=off required></div>
 <div class=form-end><button class="btn btn-danger">Replace everything with this backup</button></div></form></details></section>
 <section class=panel><h2>Encryption key</h2>
 <p>To change <code>ENCRYPTION_KEY</code>, run this on the server, then put the printed key in <code>.env</code> and restart. The old file is kept as a backup next to <code>state.enc</code>.</p>

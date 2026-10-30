@@ -118,8 +118,37 @@ test("authorization page escapes the client name, refuses a wrong password and h
   assert.equal(evil.status, 400);
 });
 
+test("pages link fingerprinted assets, so stale caches can't mix old CSS with new HTML", async () => {
+  const html = await (await fetch(`${base}/admin/login`)).text();
+  assert.match(html, /\/assets\/ui\.css\?v=[0-9a-f]{8}/);
+  const c = await login();
+  assert.match(await (await fetch(`${base}/admin`, authed(c))).text(), /\/assets\/admin\.js\?v=[0-9a-f]{8}/);
+});
+
+test("clients without a session can be cleaned up in one go", async () => {
+  const c = await login();
+  const s = getState();
+  s.clients = {
+    live: { client_id: "live", client_name: "Claude", redirect_uris: ["https://claude.ai/cb"] },
+    idle1: { client_id: "idle1", client_name: "Claude", redirect_uris: ["https://claude.ai/cb"] },
+    idle2: { client_id: "idle2", client_name: "Claude", redirect_uris: ["https://claude.ai/cb"] },
+  };
+  s.refresh.r = { clientId: "live" };
+  assert.match(await (await fetch(`${base}/admin/clients`, authed(c))).text(), /Remove 2 without a session/);
+  await fetch(`${base}/admin/clients/cleanup`, authed(c, form({})));
+  assert.deepEqual(Object.keys(s.clients), ["live"]);
+});
+
+test("the activity page offers tabs with counts", async () => {
+  const c = await login();
+  const html = await (await fetch(`${base}/admin/activity`, authed(c))).text();
+  assert.match(html, /class=tabs/);
+  assert.match(html, /aria-current=page>All/);
+});
+
 test("two-step sign-in guards both the admin login and the approval page", async () => {
   const c = await login();
+  getState().clients.abc = { client_id: "abc", client_name: "Claude", redirect_uris: ["https://claude.ai/cb"], client_id_issued_at: 1 };
   const t = beginTotpSetup("admin");
   const step = stepOf();
   assert.ok(confirmTotpSetup(hotp(t.secret, step)));

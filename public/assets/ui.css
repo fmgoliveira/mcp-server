@@ -36,7 +36,7 @@ code,.mono{font-family:var(--mono);font-size:.9em}
 .nav a[aria-current=page]{color:var(--ink);border-bottom-color:var(--accent)}
 .top-end{margin-left:auto;display:flex;align-items:center;gap:6px}
 main{padding:32px 0 56px}
-.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.page-head{margin-bottom:20px}
 h1{font-size:24px;line-height:1.2;font-weight:650;letter-spacing:-.02em}
 .lede{color:var(--muted);margin-top:4px;max-width:60ch}
 .foot{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;display:flex;gap:6px 20px;flex-wrap:wrap}
@@ -69,7 +69,7 @@ form{margin:0}
 .tag{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--sunk);border:1px solid var(--line);color:var(--muted);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
 .badge{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:#fff;font:700 11px/1 var(--font);letter-spacing:-.02em}
 .badge-lg{width:36px;height:36px;font-size:13px;border-radius:10px}
-.page-head input.search{width:220px;max-width:100%}
+
 
 .menu{position:relative}
 .menu summary{list-style:none;cursor:pointer}
@@ -152,7 +152,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:var(--sunk);border:1px
   .top .wrap{padding-top:10px;padding-bottom:0}
   .nav{order:3;width:100%;overflow-x:auto}
   .item .tag{display:none}
-  .page-head input.search{width:100%}
+
 }
 @media(prefers-reduced-motion:reduce){
   .diagram .cable{animation:none;stroke-dashoffset:0}
@@ -204,3 +204,32 @@ section.panel>p{color:var(--muted);margin-bottom:12px;max-width:62ch}
 .codes code{background:var(--sunk);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 12px;font-size:15px;text-align:center}
 .sub-details{margin-top:16px}.sub-details summary{cursor:pointer;font-weight:600}.sub-details form{margin-top:12px}
 textarea{font:13px/1.4 var(--mono);width:100%;padding:9px 12px;border-radius:var(--r-sm);border:1px solid var(--line-strong);background:var(--sunk);color:var(--ink)}
+
+/* ---- layout rhythm: title block, toolbar row, tabs ---- */
+.page-head{display:block;margin-bottom:20px}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-4px 0 24px}
+.grow{flex:1}
+.toolbar input.search,input.search{width:280px;max-width:100%}
+.tabs{display:flex;align-items:center;gap:2px;border-bottom:1px solid var(--line);margin-bottom:20px}
+.tab{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--muted);font-size:14px;font-weight:600;text-decoration:none}
+.tab:hover{color:var(--ink)}
+.tab[aria-current]{color:var(--ink);border-bottom-color:var(--accent)}
+.tab .n{min-width:22px;padding:0 7px;border:1px solid var(--line);border-radius:999px;background:var(--sunk);color:var(--muted);font-size:12px;font-weight:500;text-align:center}
+.tabs form{margin-bottom:3px}
+@media(max-width:620px){.toolbar input.search,input.search{width:100%}.toolbar .grow{display:none}.tab{padding:10px 10px}}
+
+/* ---- form controls: one look for every input type ---- */
+input[type=file]{font:inherit;font-size:14px;width:100%;padding:6px;border-radius:var(--r-sm);border:1px dashed var(--line-strong);background:var(--sunk);color:var(--muted)}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;margin-right:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);cursor:pointer}
+input[type=file]::file-selector-button:hover{border-color:var(--muted)}
+textarea{display:block;min-height:96px;resize:vertical;line-height:1.5}
+textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+.narrow,.inline-form input{max-width:320px}
+.sub-details{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.sub-details>summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600}
+.sub-details>summary::-webkit-details-marker{display:none}
+.sub-details>summary::before{content:"";width:7px;height:7px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s}
+.sub-details[open]>summary::before{transform:rotate(45deg)}
+.sub-details[open]>summary{margin-bottom:16px}
+.sub-details form{margin-top:0}
+@media(prefers-reduced-motion:reduce){.sub-details>summary::before{transition:none}}

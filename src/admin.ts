@@ -140,7 +140,7 @@ admin.get("/admin", guard, (req, res) => {
     ? `${n} account${n === 1 ? "" : "s"} across ${groups.length} service${groups.length === 1 ? "" : "s"}. Claude picks an account by its label.`
     : "Everything Claude can reach through this server.";
   const actions = n
-    ? `<div class=head-actions>${n > 5 ? `<input class=search id=filter type=text placeholder="Search accounts" aria-label="Search accounts">` : ""}<form method=post action=/admin/test-all><button class=btn title="Check that every account still works">${icon.check}Test all</button></form><a class="btn btn-primary" href=/admin/add>${icon.plus}Add account</a></div>`
+    ? `${n > 5 ? `<input class=search id=filter type=text placeholder="Search accounts" aria-label="Search accounts">` : ""}<span class=grow></span><form method=post action=/admin/test-all><button class=btn title="Check that every account still works">${icon.check}Test all</button></form><a class="btn btn-primary" href=/admin/add>${icon.plus}Add account</a>`
     : "";
   page(res, "accounts", "Accounts", flash(req) + attention(accounts) + header("Accounts", lede, actions) + body);
 });
