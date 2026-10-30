@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { config } from "./config.js";
 
 export type OAuthProvider = "google" | "microsoft" | "canva" | "github";
-export type Provider = OAuthProvider;
-export const PROVIDERS: readonly Provider[] = ["google", "microsoft", "canva", "github"];
+export type TokenProvider = "gitlab" | "cloudflare" | "discord" | "figma"; // connected with a pasted API token (no OAuth)
+export type Provider = OAuthProvider | TokenProvider;
+export const PROVIDERS: readonly OAuthProvider[] = ["google", "microsoft", "canva", "github"]; // providers with an OAuth flow
+export const TOKEN_PROVIDERS: readonly TokenProvider[] = ["gitlab", "cloudflare", "discord", "figma"];
 
 export interface Account {
   label: string; // user-chosen short name, e.g. "work"
@@ -15,6 +17,7 @@ export interface Account {
   token?: string; // non-expiring access token (GitHub OAuth App only; GitHub App tokens use refreshToken)
   scopes: string;
   addedAt: string;
+  baseUrl?: string; // self-hosted instance URL (GitLab only; default https://gitlab.com)
   credentialId?: string; // OAuth app used to connect this account; absent/"env" = the client from .env
 }
 

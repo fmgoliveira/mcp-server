@@ -71,6 +71,10 @@ export const config = {
         "Calendars.ReadWrite",
         "Files.ReadWrite.All",
         "Sites.ReadWrite.All",
+        // Teams tools: opt-in with MS_TEAMS=1 (ChannelMessage.Read.All needs tenant admin consent, which would block other tenants)
+        ...(process.env.MS_TEAMS === "1"
+          ? ["Team.ReadBasic.All", "Channel.ReadBasic.All", "ChannelMessage.Read.All", "ChannelMessage.Send", "Chat.ReadWrite"]
+          : []),
       ].join(" ")
     ).split(/\s+/),
   },

@@ -10,6 +10,11 @@ tools fan out across all accounts when you omit it.
   asset upload from URL, brand templates + autofill (Enterprise); `canva_api` escape hatch.
 - GitHub (`github_*`): repos, search, my work (assigned/review-requested/…), notifications, read/write files,
   commits, Actions runs, issues, pull requests (read, diff, create, review, merge); `github_api` escape hatch.
+- Teams (`teams_*`, Microsoft accounts): joined teams, channels, channel + chat messages, send. Opt-in: set `MS_TEAMS=1`
+  and reconnect that account (channel reads need tenant admin consent). Other accounts keep working without it.
+- API-token services, added in `/admin` → API tokens (no OAuth app): GitLab (`gitlab_*`, self-hosted via base URL),
+  Cloudflare (`cloudflare_*`, zones + DNS), Discord (`discord_*`, bot token), Figma (`figma_*`); each has an `*_api`
+  escape hatch. GitHub also accepts a PAT there (one per org when OAuth app approval isn't possible).
 - Claude → server auth: OAuth 2.1 (dynamic client registration, PKCE), approved with your admin password.
 - Account tokens: stored AES-256-GCM encrypted in `DATA_DIR/state.enc`.
 - Not available: Microsoft Forms (no public API); Word/PowerPoint get text extraction on read, but no
@@ -42,6 +47,12 @@ Recommended: a **GitHub App** (Settings → Developer settings → GitHub Apps �
 
 Limitation: GitHub Apps cannot read **notifications** (`github_notifications` fails). If you need that, use a classic
 **OAuth App** instead (same callback URL) and set `GITHUB_SCOPES="repo read:user notifications"`; its tokens do not expire.
+
+## 2d. API tokens (GitLab, Cloudflare, Discord, Figma, GitHub PAT)
+Create a token on each service, then paste it in `/admin` → API tokens with a label. It is verified and stored encrypted.
+- GitLab: token with `api` scope; set the base URL only for self-hosted. Cloudflare: scoped API token (Zone:Read, DNS:Edit).
+- Discord: a **bot** token; invite the bot to the server and enable the Message Content intent to read messages.
+- Figma: personal access token (file content + comments). Tokens don't refresh: re-add the label when one expires.
 
 ## 3. Deploy on the VM
 ```bash

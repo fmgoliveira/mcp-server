@@ -32,11 +32,15 @@ an `account` label; list/search tools fan out over all accounts of that provider
 | google | OAuth refresh token | `refreshToken` | `*.googleapis.com` |
 | microsoft | OAuth refresh token (rotates) | `refreshToken` | `graph.microsoft.com` |
 | canva | OAuth 2.0 + PKCE (Canva Connect), refresh token is single-use and rotates | `refreshToken` | `api.canva.com` |
+| gitlab / cloudflare / discord / figma | pasted API token (`TokenProvider`; `credentialId: "pat"`) | `token` (+ `baseUrl` for GitLab) | gitlab: account `baseUrl` host; others fixed |
 | github | GitHub App user-to-server OAuth (8h token + rotating refresh token), or OAuth App (non-expiring `token`) | `refreshToken` or `token` | `api.github.com` |
 
 Each account stores `credentialId` (which OAuth app connected it; absent = `.env`). Refresh uses the same app, so several apps per provider can coexist (e.g. one Canva draft integration per Canva account, since draft/public integrations only authorize their owner). Apps are managed in /admin → OAuth apps; an app in use can't be removed.
 
 Labels are user-chosen (`[a-zA-Z0-9_-]{1,32}`); re-using a label replaces the account.
+
+GitHub also accepts a PAT. Token accounts are added via `/admin/token` → `tokens.ts` (`verifyToken`, `authHeaders`: Discord `Bot`, Figma `X-Figma-Token`, others Bearer); there is no Reconnect for them.
+Teams lives in `tools/teams.ts` on the Microsoft accounts (scopes gated by `MS_TEAMS=1`); Microsoft refresh requests the account's stored `scopes`, not the global config.
 
 ## Conventions
 - ESM + NodeNext: relative imports end in `.js`. TypeScript `strict`.

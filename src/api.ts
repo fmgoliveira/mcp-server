@@ -1,5 +1,6 @@
-import { getAccount, Provider } from "./store.js";
+import { getAccount, Provider, type Account } from "./store.js";
 import { accessToken, invalidate } from "./providers.js";
+import { authHeaders, DEFAULT_GITLAB } from "./tokens.js";
 
 const MAX_OUT = 60_000; // characters returned to the model per call
 
@@ -8,6 +9,10 @@ const ALLOWED_HOSTS: Record<Provider, RegExp> = {
   microsoft: /^graph\.microsoft\.com$/,
   github: /^api\.github\.com$/,
   canva: /^api\.canva\.com$/,
+  gitlab: /^$/, // checked against the account's own base URL (see checkHost)
+  cloudflare: /^api\.cloudflare\.com$/,
+  discord: /^discord\.com$/,
+  figma: /^api\.figma\.com$/,
 };
 
 export interface ApiOpts {
@@ -29,8 +34,10 @@ function nextLink(r: Response): string | undefined {
   return undefined;
 }
 
-function checkHost(provider: Provider, _label: string, u: URL) {
-  const ok = u.protocol === "https:" && ALLOWED_HOSTS[provider].test(u.hostname);
+function checkHost(provider: Provider, acc: Account, u: URL) {
+  const ok =
+    u.protocol === "https:" &&
+    (provider === "gitlab" ? u.hostname === new URL(acc.baseUrl ?? DEFAULT_GITLAB).hostname : ALLOWED_HOSTS[provider].test(u.hostname));
   if (!ok) throw new Error(`Host ${u.hostname} is not allowed for ${provider} accounts`);
 }
 
@@ -38,6 +45,7 @@ function defaultHeaders(provider: Provider): Record<string, string> {
   if (provider === "github") {
     return { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "multi-account-mcp" };
   }
+  if (provider === "discord") return { "user-agent": "DiscordBot (https://github.com/multi-account-mcp, 1.0)" };
   return {};
 }
 
@@ -45,7 +53,7 @@ export async function api(label: string, provider: Provider, url: string, opts: 
   const acc = getAccount(label);
   if (acc.provider !== provider) throw new Error(`Account "${label}" is a ${acc.provider} account, not ${provider}`);
   const first = new URL(url);
-  checkHost(provider, label, first);
+  checkHost(provider, acc, first);
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v === undefined) continue;
     if (Array.isArray(v)) v.forEach((x) => first.searchParams.append(k, x));
@@ -57,7 +65,7 @@ export async function api(label: string, provider: Provider, url: string, opts: 
       method: opts.method ?? (opts.body ? "POST" : "GET"),
       headers: {
         ...defaultHeaders(provider),
-        authorization: `Bearer ${await accessToken(label)}`,
+        ...authHeaders(provider, await accessToken(label)),
         ...(opts.body !== undefined && !(opts.body instanceof Uint8Array) ? { "content-type": "application/json" } : {}),
         ...opts.headers,
       },
@@ -98,7 +106,7 @@ export async function api(label: string, provider: Provider, url: string, opts: 
       const next = nextLink(r);
       if (!next) break;
       const nu = new URL(next);
-      checkHost(provider, label, nu); // never follow a Link header off-host with the bearer token
+      checkHost(provider, acc, nu); // never follow a Link header off-host with the bearer token
       ({ r, text } = await fetchOnce(nu));
       const more = parse(text);
       if (!Array.isArray(more)) break;

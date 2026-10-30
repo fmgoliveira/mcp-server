@@ -2,7 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { config } from "./config.js";
 import { buildAuthUrl, completeConnect, invalidate, redirectUri } from "./providers.js";
-import { ENV_CREDENTIAL, getState, listAccounts, listCredentials, save, PROVIDERS, type OAuthProvider } from "./store.js";
+import { ENV_CREDENTIAL, getState, listAccounts, listCredentials, save, PROVIDERS, type OAuthProvider, type Provider } from "./store.js";
+import { normalizeBaseUrl, TOKEN_META, verifyToken } from "./tokens.js";
 import { passwordOk, recordFail, tooManyFails } from "./auth-provider.js";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -25,12 +26,17 @@ const guard = (req: Request, res: Response, next: NextFunction) =>
   validSession(req) ? next() : res.redirect("/admin/login");
 
 // ---------- presentation ----------
-const META: Record<OAuthProvider, { name: string; abbr: string; color: string; blurb: string }> = {
+const META: Record<Provider, { name: string; abbr: string; color: string; blurb: string }> = {
   google: { name: "Google", abbr: "G", color: "#4285f4", blurb: "Gmail, Calendar, Drive, Docs" },
   microsoft: { name: "Microsoft 365", abbr: "M", color: "#0f6cbd", blurb: "Outlook, Calendar, OneDrive" },
   canva: { name: "Canva", abbr: "C", color: "#7d2ae8", blurb: "Designs, exports, folders" },
   github: { name: "GitHub", abbr: "GH", color: "#57606a", blurb: "Repos, issues, pull requests" },
+  gitlab: { name: "GitLab", abbr: "GL", color: "#e24329", blurb: "Projects, merge requests, pipelines" },
+  cloudflare: { name: "Cloudflare", abbr: "CF", color: "#f38020", blurb: "Zones, DNS records" },
+  discord: { name: "Discord", abbr: "D", color: "#5865f2", blurb: "Servers, channels, messages (bot)" },
+  figma: { name: "Figma", abbr: "F", color: "#a259ff", blurb: "Files, comments, projects" },
 };
+const PAT_CREDENTIAL = "pat"; // marks accounts connected with a pasted API token (no OAuth app)
 const configured = (p: OAuthProvider) => listCredentials(p).length > 0;
 
 const CSS = `
@@ -80,7 +86,7 @@ const layout = (title: string, body: string) => `<!doctype html><html lang=en><m
 <meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content=noindex>
 <title>${esc(title)}</title><style>${CSS}</style><body>${body}</body></html>`;
 
-const badge = (p: OAuthProvider) => `<div class=badge style="background:${META[p].color}">${META[p].abbr}</div>`;
+const badge = (p: Provider) => `<div class=badge style="background:${META[p].color}">${META[p].abbr}</div>`;
 
 export const admin = Router();
 
@@ -117,11 +123,16 @@ admin.get("/admin", guard, (req, res) => {
   const rows = accounts
     .map((a) => {
       const p = a.provider;
+      const isPat = a.credentialId === PAT_CREDENTIAL;
       const app = listCredentials(p).find((c) => c.id === (a.credentialId ?? ENV_CREDENTIAL));
+      const appName = isPat ? "API token" : (app?.name ?? "missing");
+      const reconnect = isPat
+        ? ""
+        : `<form method=post action=/admin/connect><input type=hidden name=label value="${esc(a.label)}"><input type=hidden name=provider value="${p}"><input type=hidden name=credential value="${esc(a.credentialId ?? ENV_CREDENTIAL)}"><button title="Re-authorize this account">Reconnect</button></form>`;
       return `<div class=row>${badge(p)}
-<div class=grow><div class=name>${esc(a.label)}</div><div class=meta>${META[p].name} · ${esc(a.email || "unknown identity")} · app: ${esc(app?.name ?? "missing")} · added ${esc(a.addedAt.slice(0, 10))}</div></div>
+<div class=grow><div class=name>${esc(a.label)}</div><div class=meta>${META[p].name} · ${esc(a.email || "unknown identity")} · app: ${esc(appName)}${a.baseUrl ? ` · ${esc(a.baseUrl)}` : ""} · added ${esc(a.addedAt.slice(0, 10))}</div></div>
 <div class=actions>
-<form method=post action=/admin/connect><input type=hidden name=label value="${esc(a.label)}"><input type=hidden name=provider value="${p}"><input type=hidden name=credential value="${esc(a.credentialId ?? ENV_CREDENTIAL)}"><button title="Re-authorize this account">Reconnect</button></form>
+${reconnect}
 <form method=post action=/admin/remove onsubmit="return confirm('Remove ${esc(a.label).replace(/'/g, "")}?')"><input type=hidden name=label value="${esc(a.label)}"><button class=danger>Remove</button></form>
 </div></div>`;
     })
@@ -150,6 +161,8 @@ admin.get("/admin", guard, (req, res) => {
     })
     .join("");
   const providerOptions = PROVIDERS.map((p) => `<option value="${p}">${META[p].name}</option>`).join("");
+  const tokenOptions = Object.entries(TOKEN_META).map(([k, m]) => `<option value="${k}">${m.name}</option>`).join("");
+  const tokenHints = Object.values(TOKEN_META).map((m) => `<li><b>${m.name}</b>: ${esc(m.hint)}</li>`).join("");
   const redirectHints = PROVIDERS.map((p) => `${META[p].name}: ${redirectUri(p)}`).join("<br>");
   const mcpUrl = `${config.publicUrl}/mcp`;
   res.type("html").send(
@@ -173,6 +186,19 @@ admin.get("/admin", guard, (req, res) => {
 <input id=label type=text name=label placeholder="e.g. work, ninf, personal" pattern="[a-zA-Z0-9_\\-]{1,32}" required></div>
 <button class=primary>Connect →</button></div>
 <p class=note>The label is what Claude uses to pick an account. Re-using a label replaces that account. Use a private window to choose the right identity on the provider's consent screen.</p>
+</form>
+
+<h2>API tokens</h2>
+<form class=card method=post action=/admin/token style="padding:18px" autocomplete=off>
+<div class=grid2>
+<div><label class=l for=tp>Service</label><select id=tp name=provider required>${tokenOptions}</select></div>
+<div><label class=l for=pl>Label</label><input id=pl type=text name=label placeholder="e.g. gh-acme, cf-sinformania" pattern="[a-zA-Z0-9_\\-]{1,32}" required></div>
+<div><label class=l for=pt>Token</label><input id=pt type=password name=token autocomplete=new-password required></div>
+<div><label class=l for=pb>GitLab base URL (optional)</label><input id=pb type=text name=baseUrl placeholder="https://gitlab.com"></div>
+</div>
+<p style="margin:14px 0 0"><button class=primary>Add token</button></p>
+<p class=note>The token is verified against the service and stored encrypted. Re-using a label replaces that account. Tokens don't refresh here: re-add the label when one expires.</p>
+<ul class=hint style="padding-left:18px">${tokenHints}</ul>
 </form>
 
 <h2>OAuth apps</h2>
@@ -217,6 +243,32 @@ admin.post("/admin/connect", guard, (req, res) => {
   const cred = listCredentials(provider).find((c) => c.id === (credId || undefined) ) ?? listCredentials(provider)[0];
   if (!cred || (credId && cred.id !== credId)) return void res.status(400).send(`No matching ${provider} OAuth app; add one first`);
   res.redirect(buildAuthUrl(provider, label, cred.id));
+});
+
+admin.post("/admin/token", guard, async (req, res) => {
+  const provider = String(req.body?.provider ?? "");
+  const label = String(req.body?.label ?? "");
+  const token = String(req.body?.token ?? "").trim();
+  if (!(provider in TOKEN_META) || !/^[a-zA-Z0-9_-]{1,32}$/.test(label) || !token) return void res.status(400).send("Service, label and token are required");
+  try {
+    const baseUrl = provider === "gitlab" ? normalizeBaseUrl(String(req.body?.baseUrl ?? "")) : undefined;
+    const { identity, scopes } = await verifyToken(provider, token, baseUrl);
+    getState().accounts[label] = {
+      label,
+      provider: provider as Provider,
+      email: identity,
+      token,
+      scopes,
+      addedAt: new Date().toISOString(),
+      credentialId: PAT_CREDENTIAL,
+      ...(baseUrl ? { baseUrl } : {}),
+    };
+    invalidate(label);
+    save();
+    res.redirect("/admin");
+  } catch (e: any) {
+    res.status(400).type("html").send(layout("Failed", `<main class=center><div class=card style="padding:24px"><h1>Couldn't add token</h1><pre>${esc(String(e.message ?? e))}</pre><a class=btn href=/admin>Back</a></div></main>`));
+  }
 });
 
 admin.post("/admin/credentials", guard, (req, res) => {

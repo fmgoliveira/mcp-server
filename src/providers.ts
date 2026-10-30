@@ -159,7 +159,8 @@ export async function accessToken(label: string): Promise<string> {
           refresh_token: acc.refreshToken,
           client_id: cred.clientId,
           client_secret: cred.clientSecret,
-          ...(acc.provider === "microsoft" ? { scope: config.microsoft.scopes.join(" ") } : {}),
+          // ask only for what this account already consented to (new scopes in config would otherwise break the refresh)
+          ...(acc.provider === "microsoft" ? { scope: acc.scopes || config.microsoft.scopes.join(" ") } : {}),
         });
   if (tok.refresh_token && tok.refresh_token !== acc.refreshToken) {
     acc.refreshToken = tok.refresh_token; // Microsoft, Canva (single-use) and GitHub App rotate refresh tokens

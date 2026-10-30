@@ -11,6 +11,11 @@ import { registerGoogle } from "./tools/google.js";
 import { registerMicrosoft } from "./tools/microsoft.js";
 import { registerCanva } from "./tools/canva.js";
 import { registerGithub } from "./tools/github.js";
+import { registerTeams } from "./tools/teams.js";
+import { registerGitlab } from "./tools/gitlab.js";
+import { registerCloudflare } from "./tools/cloudflare.js";
+import { registerDiscord } from "./tools/discord.js";
+import { registerFigma } from "./tools/figma.js";
 
 function buildServer(): McpServer {
   const s = new McpServer({ name: "multi-account", version: "0.1.0" });
@@ -19,6 +24,11 @@ function buildServer(): McpServer {
   registerMicrosoft(s);
   registerCanva(s);
   registerGithub(s);
+  registerTeams(s);
+  registerGitlab(s);
+  registerCloudflare(s);
+  registerDiscord(s);
+  registerFigma(s);
   return s;
 }
 
@@ -30,7 +40,7 @@ const issuerUrl = new URL(config.publicUrl);
 const mcpUrl = new URL(`${config.publicUrl}/mcp`);
 
 // OAuth endpoints for Claude (metadata, /register, /authorize, /token, /revoke)
-app.use(mcpAuthRouter({ provider, issuerUrl, resourceServerUrl: mcpUrl, resourceName: "Multi-account Google + Microsoft + Canva + GitHub" }));
+app.use(mcpAuthRouter({ provider, issuerUrl, resourceServerUrl: mcpUrl, resourceName: "Multi-account Google, Microsoft, Canva, GitHub, GitLab, Cloudflare, Discord, Figma" }));
 app.post("/authorize/confirm", confirmAuthorize);
 
 app.use(admin);
