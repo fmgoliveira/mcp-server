@@ -63,13 +63,24 @@
       });
       if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled && first) sel.value = first.value;
 
+      var token = kind === "token";
       $$("[data-show]", form).forEach(function (el) {
         var w = el.getAttribute("data-show");
-        var on = w === kind || (w === "gitlab" && p === "gitlab") || (w === "noapp" && kind === "oauth" && !hasApp);
+        var on = w === kind || (w === "baseurl" && token && (p === "gitlab" || p === "atlassian")) || (w === "atlassian" && token && p === "atlassian") || (w === "noapp" && kind === "oauth" && !hasApp);
         el.hidden = !on;
         $$("input,select", el).forEach(function (c) { c.disabled = !on; });
       });
       $$("[data-hint]", form).forEach(function (el) { el.hidden = !(kind === "token" && el.getAttribute("data-hint") === p); });
+      var base = $("#baseUrl", form);
+      if (base) {
+        var site = p === "atlassian";
+        base.required = token && site;
+        base.placeholder = site ? "https://acme.atlassian.net" : "https://gitlab.com";
+        $("#baseurl-label", form).textContent = site ? "Site URL" : "GitLab base URL";
+        $("#baseurl-hint", form).textContent = site ? "Your Atlassian Cloud address. Jira and Confluence share it." : "Leave empty for gitlab.com. Self-hosted instances must use https.";
+      }
+      var user = $("#username", form);
+      if (user) user.required = token && p === "atlassian";
       var link = $("#noapp-link", form);
       if (link) link.href = "/admin/apps?service=" + encodeURIComponent(p);
       var name = $("#noapp-name", form);
@@ -80,4 +91,15 @@
     radios.forEach(function (r) { r.addEventListener("change", sync); });
     sync();
   }
+
+  // File inputs that fill a textarea (backup restore)
+  $$("input[data-fill]").forEach(function (f) {
+    f.addEventListener("change", function () {
+      var file = f.files && f.files[0];
+      if (!file) return;
+      var r = new FileReader();
+      r.onload = function () { document.getElementById(f.getAttribute("data-fill")).value = String(r.result).trim(); };
+      r.readAsText(file);
+    });
+  });
 })();

@@ -132,6 +132,8 @@ export async function completeConnect(provider: OAuthProvider, code: string, sta
     addedAt: new Date().toISOString(),
     credentialId: cred.id,
   };
+  const prev = getState().accounts[ctx.label];
+  if (prev) Object.assign(account, { readOnly: prev.readOnly, group: prev.group, isDefault: prev.isDefault });
   getState().accounts[ctx.label] = account;
   save();
   if (tok.expires_in) cache.set(ctx.label, { token: tok.access_token, expires: Date.now() + (tok.expires_in ?? 3600) * 1000 - 60_000 });

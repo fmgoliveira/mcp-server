@@ -6,7 +6,8 @@ an `account` label; list/search tools fan out over all accounts of that provider
 
 ## Commands
 - `npm run dev` – run with tsx, loading `.env` via `--env-file` (the app does not read `.env` itself; Docker injects it via `env_file`)
-- `npm run build` – `tsc` to `dist/` (this is also the typecheck; there are no tests or linter)
+- `npm run build` – `tsc` to `dist/` (this is also the typecheck; there is no linter)
+- `npm test` – node:test suite (`test/*.test.ts`)
 - `npm start` – run the built server
 - `docker compose up -d --build` – production (publishes port 5757, bind-mounts `./data` to `/data`; put your own reverse proxy in front; the entrypoint chowns it to `node` then drops root)
 
@@ -33,13 +34,27 @@ an `account` label; list/search tools fan out over all accounts of that provider
 - `tools/common.ts` – `tool()` wrapper (error → `isError`, annotations), `fanOut()`, `list_accounts`.
 - `tools/{google,microsoft,canva,github}.ts` – one `registerX(server)` each.
 
+## Policy, activity and admin features
+- `policy.ts` – pure rules: `resolveAccount` (empty `account` → provider default or only account; a group name is rejected where one
+  account is needed), `assertAllowed` (read-only accounts: only `readOnly` tools plus GET/GraphQL-query through `*_api`; keep the
+  `linear_api`/`slack_api` special cases, they have no HTTP `method`). `tools/common.ts` `tool()` applies them, logs to
+  `state.activity` (no arguments/results) and skips registering tools in `settings.disabledTools`. `account` is a shared zod schema with
+  `.default("")`; `accountOrAll` stays optional and fans out over all accounts **or a group** (`fanOut`).
+- `TOOL_REGISTRY` is filled when `buildServer()` (`mcp.ts`) runs; `server.ts` calls it once at boot so the Tools page can list everything.
+- `health.ts` – per-service "who am I" probe → `account.health`; scheduled by `HEALTH_CHECK_INTERVAL_HOURS`. Token expiry comes from `verifyToken`.
+- `security.ts`/`totp.ts` – two-step sign-in (admin login uses a signed `pre` cookie between password and code; the Claude approval page
+  asks for the code inline). `backup.ts`/`crypto.ts`/`cli/rotate-key.ts` – passphrase backups and key rotation.
+- `app.ts` exports `createApp()` (tests call it); `server.ts` only listens. Admin routes live in `admin.ts` (login, accounts, add, OAuth apps)
+  and `admin-more.ts` (account page, activity, tools, clients, settings), shared helpers in `admin-shared.ts`.
+- Tests: `npm test` (node:test via tsx, `test/setup.ts` sets env + a temp `DATA_DIR`; import it first). Add a test with every policy/security change.
+
 ## Account model
 | Provider | Auth | Stored on account | Allowed API host |
 |---|---|---|---|
 | google | OAuth refresh token | `refreshToken` | `*.googleapis.com` |
 | microsoft | OAuth refresh token (rotates) | `refreshToken` | `graph.microsoft.com` |
 | canva | OAuth 2.0 + PKCE (Canva Connect), refresh token is single-use and rotates | `refreshToken` | `api.canva.com` |
-| gitlab / cloudflare / discord / figma | pasted API token (`TokenProvider`; `credentialId: "pat"`) | `token` (+ `baseUrl` for GitLab) | gitlab: account `baseUrl` host; others fixed |
+| gitlab / cloudflare / discord / figma / slack / notion / linear / atlassian | pasted API token (`TokenProvider`; `credentialId: "pat"`) | `token` (+ `baseUrl` for GitLab/Atlassian, `username` email for Atlassian) | gitlab and atlassian: account `baseUrl` host; others fixed |
 | github | GitHub App user-to-server OAuth (8h token + rotating refresh token), or OAuth App (non-expiring `token`) | `refreshToken` or `token` | `api.github.com` |
 
 Each account stores `credentialId` (which OAuth app connected it; absent = `.env`). Refresh uses the same app, so several apps per provider can coexist (e.g. one Canva draft integration per Canva account, since draft/public integrations only authorize their owner). Apps are managed in /admin → OAuth apps; an app in use can't be removed.

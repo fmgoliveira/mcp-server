@@ -7,6 +7,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { config } from "./config.js";
 import { getState, save } from "./store.js";
 import { errorGate, esc, gate } from "./ui.js";
+import { checkSecondFactor, totpEnabled } from "./security.js";
 
 const ACCESS_TTL = 60 * 60; // seconds
 const rand = () => randomBytes(32).toString("base64url");
@@ -68,6 +69,8 @@ function consentPage(i: ConsentInfo, error = ""): string {
 ${error ? `<p class="notice error" role=alert>${esc(error)}</p>` : ""}
 <label class=field-label for=password>Admin password</label>
 <input id=password type=password name=password autofocus required autocomplete=current-password>
+${totpEnabled() ? `<label class=field-label for=code style="margin-top:14px">Authenticator code</label>
+<input id=code type=text name=code inputmode=numeric autocomplete=one-time-code placeholder="6-digit code or recovery code" required>` : ""}
 <div class=actions><button class="btn btn-primary" name=action value=approve>Approve</button>
 <button class=btn name=action value=deny formnovalidate>Deny</button></div></form>
 <p class=fine>Only approve if you just started this from Claude.</p></div>`,
@@ -162,7 +165,7 @@ export const provider: OAuthServerProvider = {
 
 // POST /authorize/confirm
 export async function confirmAuthorize(req: Request, res: Response) {
-  const { client_id, redirect_uri, code_challenge, state, password, action } = req.body ?? {};
+  const { client_id, redirect_uri, code_challenge, state, password, action, code: otp } = req.body ?? {};
   const client = getState().clients[client_id];
   if (!client || !client.redirect_uris?.includes(redirect_uri)) {
     return void res.status(400).type("html").send(errorGate("Can't authorize", "This request doesn't match a registered app. Start the connection again from Claude."));
@@ -187,8 +190,48 @@ export async function confirmAuthorize(req: Request, res: Response) {
     recordFail();
     return void res.status(401).type("html").send(consentPage(info, "That password isn't right."));
   }
+  if (totpEnabled() && !checkSecondFactor(String(otp ?? ""))) {
+    recordFail();
+    return void res.status(401).type("html").send(consentPage(info, "That authenticator code isn't right."));
+  }
   const code = rand();
   getState().codes[code] = { clientId: client_id, challenge: code_challenge, redirectUri: redirect_uri, expires: Date.now() + 5 * 60_000 };
   save();
   res.redirect(back({ code }));
+}
+
+// ---- connected MCP clients (what appears under Clients in the admin UI) ----
+export interface ClientInfo {
+  id: string;
+  name: string;
+  issuedAt: number;
+  lastUsed?: number;
+  redirectHosts: string[];
+  sessions: number;
+}
+
+export function listClients(): ClientInfo[] {
+  const s = getState();
+  return Object.values(s.clients)
+    .map((c: any) => ({
+      id: String(c.client_id),
+      name: String(c.client_name ?? "Unnamed app"),
+      issuedAt: (c.client_id_issued_at ?? 0) * 1000,
+      lastUsed: c.last_used as number | undefined,
+      redirectHosts: [...new Set<string>((c.redirect_uris ?? []).map(hostOf))],
+      sessions: Object.values(s.refresh).filter((r) => r.clientId === c.client_id).length,
+    }))
+    .sort((a, b) => (b.lastUsed ?? b.issuedAt) - (a.lastUsed ?? a.issuedAt));
+}
+
+/** Forget a client and every token and pending code it holds; it has to be approved again to reconnect. */
+export function revokeClient(id: string): boolean {
+  const s = getState();
+  if (!s.clients[id]) return false;
+  delete s.clients[id];
+  for (const [k, v] of Object.entries(s.access)) if (v.clientId === id) delete s.access[k];
+  for (const [k, v] of Object.entries(s.refresh)) if (v.clientId === id) delete s.refresh[k];
+  for (const [k, v] of Object.entries(s.codes)) if (v.clientId === id) delete s.codes[k];
+  save();
+  return true;
 }

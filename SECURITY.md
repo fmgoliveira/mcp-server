@@ -16,6 +16,12 @@ on them. Treat it like a password manager:
   everything.
 - **One admin password.** `ADMIN_PASSWORD` unlocks `/admin` and approves new MCP clients on the authorization page. There are
   no user accounts or roles. Anyone with the password can connect a client that can use every account.
+- **Two-step sign-in (optional).** Turn on an authenticator-app code in Settings. It is asked after the password on `/admin` and
+  on the approval page. Recovery codes are stored hashed and work once.
+- **Read-only accounts and tool switches** are enforced by the server for every call, including the `*_api` escape hatches.
+- **Activity log.** Tool name, account, result and timing only; arguments and results are never recorded.
+- **Backups** are encrypted with a passphrase of your choice (scrypt + AES-256-GCM) and contain your accounts' tokens, so
+  store them like the live data.
 - **Brute-force limit.** Ten failed password attempts in 15 minutes block further attempts. The counter is in memory and
   resets on restart.
 - **Upstream allowlist.** Tool calls only reach the hosts listed in `src/api.ts` (and the base URL of a GitLab account).

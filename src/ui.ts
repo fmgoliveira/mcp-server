@@ -15,6 +15,10 @@ export const META: Record<Provider, { name: string; abbr: string; color: string;
   cloudflare: { name: "Cloudflare", abbr: "CF", color: "#c2410c", blurb: "Zones and DNS records" },
   discord: { name: "Discord", abbr: "D", color: "#5865f2", blurb: "Servers, channels, messages" },
   figma: { name: "Figma", abbr: "F", color: "#a259ff", blurb: "Files, comments, projects" },
+  slack: { name: "Slack", abbr: "S", color: "#611f69", blurb: "Channels, messages, search" },
+  notion: { name: "Notion", abbr: "N", color: "#37352f", blurb: "Pages, databases, search" },
+  linear: { name: "Linear", abbr: "L", color: "#5e6ad2", blurb: "Issues, projects, comments" },
+  atlassian: { name: "Jira and Confluence", abbr: "A", color: "#0052cc", blurb: "Issues, JQL, pages" },
 };
 
 export const badge = (p: Provider, large = false) =>
@@ -27,6 +31,9 @@ export const icon = {
   more: svg('<circle cx=12 cy=5 r=1 /><circle cx=12 cy=12 r=1 /><circle cx=12 cy=19 r=1 />'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   refresh: svg('<path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"/>'),
+  check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  edit: svg('<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+  download: svg('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
 };
 
@@ -38,7 +45,7 @@ const head = (title: string, script: boolean) => `<!doctype html><html lang=en><
 <link rel=apple-touch-icon href=/apple-touch-icon.png>
 <link rel=stylesheet href=/assets/ui.css>${script ? "<script src=/assets/admin.js defer></script>" : ""}`;
 
-export type NavKey = "accounts" | "add" | "apps";
+export type NavKey = "accounts" | "activity" | "tools" | "clients" | "settings";
 
 /** Signed-in admin pages: top bar with navigation, connector URL and sign out. */
 export function shell(o: { title: string; active: NavKey; mcpUrl: string; body: string }): string {
@@ -48,9 +55,9 @@ export function shell(o: { title: string; active: NavKey; mcpUrl: string; body: 
 <body>
 <header class=top><div class=wrap>
 <a class=brand href=/admin><img src=/favicon.svg alt="">Multi-account MCP</a>
-<nav class=nav aria-label=Main>${link("accounts", "/admin", "Accounts")}${link("add", "/admin/add", "Add account")}${link("apps", "/admin/apps", "OAuth apps")}</nav>
+<nav class=nav aria-label=Main>${link("accounts", "/admin", "Accounts")}${link("activity", "/admin/activity", "Activity")}${link("tools", "/admin/tools", "Tools")}${link("clients", "/admin/clients", "Clients")}${link("settings", "/admin/settings", "Settings")}</nav>
 <div class=top-end>
-<button class="btn btn-quiet" type=button data-copy="${esc(o.mcpUrl)}" title="Paste this URL into Claude → Settings → Connectors">${icon.copy}<span data-copy-label>Copy connector URL</span></button>
+<button class="btn btn-quiet" type=button data-copy="${esc(o.mcpUrl)}" title="Paste this URL into Claude → Settings → Connectors">${icon.copy}<span data-copy-label>Connector URL</span></button>
 <form method=post action=/admin/logout><button class="btn btn-quiet">Sign out</button></form>
 </div></div></header>
 <main><div class=wrap>${o.body}

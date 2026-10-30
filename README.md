@@ -3,9 +3,10 @@
 [![CI](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0b6b5c.svg)](LICENSE)
 
-A self-hosted [MCP](https://modelcontextprotocol.io) server that lets Claude use **several accounts per service at the same
-time**: two Google accounts, a work and a personal GitHub, three Canva teams. You add it to Claude once as a custom
-connector. Every tool takes an `account` label, and list and search tools fan out over all accounts when you leave it out.
+A self-hosted [MCP](https://modelcontextprotocol.io) server that lets Claude use **several accounts per service at the
+same time**: two Google accounts, a work and a personal GitHub, three Canva teams. You add it to Claude once as a custom
+connector. Every tool takes an `account` label (or uses your default), and list and search tools fan out over all
+accounts, or a named group, when you leave it out.
 
 <p align="center">
   <img src="docs/screenshots/admin-accounts.png" width="49%" alt="Accounts page of the admin UI">
@@ -25,9 +26,29 @@ connector. Every tool takes an `account` label, and list and search tools fan ou
 | Cloudflare | API token | Zones and DNS records, plus `cloudflare_api` |
 | Discord | Bot token | Servers, channels, read and send messages, plus `discord_api` |
 | Figma | API token | Files, projects, comments, image export, plus `figma_api` |
+| Slack | Bot or user token | Channels, history, threads, search, users, send, plus `slack_api` |
+| Notion | Integration token | Search, read pages, query databases, create pages, append text, plus `notion_api` |
+| Linear | API key | Issues, teams, create, update, comment, plus `linear_api` (GraphQL) |
+| Jira and Confluence | Email + API token | JQL search, issues, create, comment, transition, Confluence search and pages, plus `atlassian_api` |
 
 Read-only tools are annotated as such, so Claude can auto-allow reads and ask before anything that sends, edits or
 deletes. Every service has an `*_api` escape hatch for calls that don't have a dedicated tool yet.
+
+## Admin UI
+
+Everything is managed from `/admin`:
+
+- **Accounts:** grouped by service, with a status light from automatic connection tests, a warning when a pasted token is
+  about to expire, and a **Test all** button. Each account has its own page.
+- **Read-only accounts:** tick one box and Claude can read an account but not send, edit or delete anything in it. The
+  `*_api` escape hatches stay usable for GET requests and GraphQL queries only.
+- **Groups and defaults:** give accounts a group such as `work` and use it in place of a label ("search my work
+  accounts"). Mark one account per service as the default for when Claude doesn't name one.
+- **Tools:** switch individual tools off for everyone. A switched-off tool disappears from Claude's tool list.
+- **Activity:** the last 500 tool calls with account, result and timing. Arguments and results are never recorded.
+- **Clients:** every app that was approved to use the server, with last-used time and a **Revoke** button.
+- **Settings:** two-step sign-in (authenticator app and recovery codes), OAuth apps, passphrase-protected backup and
+  restore, and key rotation.
 Not available: Microsoft Forms (no public API). Word and PowerPoint files are read as text but not edited in place.
 
 ## Quick start
@@ -57,7 +78,10 @@ Then:
 5. Try *"List my connected accounts"*, *"Which pull requests need my review?"* or *"Search all my inboxes for the invoice
    from Acme"*.
 
-<p align="center"><img src="docs/screenshots/admin-add.png" width="70%" alt="Add account page"></p>
+<p align="center">
+  <img src="docs/screenshots/admin-activity.png" width="49%" alt="Activity log with a blocked call">
+  <img src="docs/screenshots/admin-add.png" width="49%" alt="Add account page">
+</p>
 
 ## Configuration
 
@@ -75,6 +99,7 @@ be added in **/admin → OAuth apps**, which is handy when you need several apps
 | `GITHUB_CLIENT_ID` / `_SECRET` | no | Default GitHub App or OAuth App. |
 | `GOOGLE_SCOPES`, `MS_SCOPES`, `CANVA_SCOPES`, `GITHUB_SCOPES` | no | Override the requested scopes (space separated). |
 | `MS_TEAMS` | no | Set to `1` to request Teams scopes. Reconnect the Microsoft accounts that need Teams. |
+| `HEALTH_CHECK_INTERVAL_HOURS` | no | How often to test every account's connection, default `6`. `0` turns it off. |
 | `PORT` | no | Listening port, default `3000` (the container publishes it as 5757). |
 | `DATA_DIR` | no | Where `state.enc` is stored, default `./data`. |
 
@@ -138,7 +163,7 @@ works: add it under **Add account → GitHub token**.
 </details>
 
 <details>
-<summary><b>GitLab, Cloudflare, Discord, Figma (API tokens)</b></summary>
+<summary><b>GitLab, Cloudflare, Discord, Figma, Slack, Notion, Linear, Jira and Confluence (API tokens)</b></summary>
 
 Create a token on the service and paste it under **Add account**. It is verified against the service and stored encrypted.
 
@@ -146,8 +171,15 @@ Create a token on the service and paste it under **Add account**. It is verified
 - **Cloudflare:** an API token scoped to the zones you need (Zone:Read, DNS:Edit).
 - **Discord:** a bot token. Invite the bot to your server and enable the Message Content intent to read messages.
 - **Figma:** a personal access token with file content and comments access.
+- **Slack:** a bot token (`xoxb-…`) from a Slack app with `channels:read`, `channels:history`, `groups:read`, `groups:history`,
+  `chat:write` and `users:read`. Search needs a user token (`xoxp-…`) with `search:read`.
+- **Notion:** an internal integration secret. Share each page or database with the integration or it can't see it.
+- **Linear:** a personal API key from Settings → Account → Security & access.
+- **Jira and Confluence:** an Atlassian Cloud API token, the email it belongs to and your site URL, for example
+  `https://acme.atlassian.net`.
 
-Tokens don't refresh. When one expires, add the same label again with a new token.
+Tokens don't refresh. When one expires, add the same label again with a new token; its group, default and read-only
+settings are kept. GitHub, GitLab and Cloudflare report an expiry date, and the admin UI warns two weeks ahead.
 </details>
 
 ## Security
@@ -155,6 +187,8 @@ Tokens don't refresh. When one expires, add the same label again with a new toke
 - All accounts, OAuth app secrets and tokens are stored in one AES-256-GCM encrypted file, `data/state.enc`.
 - Claude authenticates to this server with OAuth 2.1 (dynamic client registration, PKCE). Approving a client needs the
   admin password, and failed attempts are rate limited.
+- Optional two-step sign-in (TOTP) protects both `/admin` and the approval page. Recovery codes are stored hashed.
+- Read-only accounts and per-tool switches are enforced on the server, not just hinted to the client.
 - Tool calls can only reach an allowlist of upstream hosts, so a stored token is never sent anywhere else.
 - Anyone with the admin password can connect a client that can use **every** account. Use a long random password, serve
   over HTTPS only, and run one instance per group of people who trust each other.
@@ -168,6 +202,7 @@ npm install
 cp .env.example .env
 npm run dev      # tsx with .env loaded, http://localhost:3000/admin
 npm run build    # compiles to dist/ and doubles as the typecheck
+npm test         # unit and HTTP tests (node:test, no extra services needed)
 npm start        # runs the built server
 ```
 
@@ -175,8 +210,12 @@ npm start        # runs the built server
 src/
   server.ts          Express app, OAuth endpoints for Claude, /mcp, security headers
   auth-provider.ts   MCP OAuth provider and the authorization page
-  admin.ts, ui.ts    Admin UI (server-rendered) and shared HTML pieces
-  store.ts           Encrypted state: accounts, OAuth apps, MCP clients, tokens
+  admin*.ts, ui.ts   Admin UI (server-rendered pages) and shared HTML pieces
+  policy.ts          Read-only accounts, default account and group resolution
+  health.ts          Connection tests and token-expiry warnings
+  security.ts, totp.ts   Two-step sign-in
+  backup.ts, crypto.ts, cli/   Encrypted backup, encryption helpers, key rotation
+  store.ts           Encrypted state: accounts, OAuth apps, MCP clients, tokens, settings, activity
   providers.ts       OAuth connect and token refresh per service
   tokens.ts          API-token verification
   api.ts             The only place that calls upstream APIs (allowlist, retry, truncation)
@@ -186,19 +225,22 @@ public/              Favicon and the admin UI's stylesheet and script
 
 More detail for contributors, including how to add a provider, is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Backup and key rotation
+
+- **Backup:** *Settings → Backup* downloads accounts, OAuth apps and settings as a file protected by a passphrase. It
+  restores on any instance, even one with a different `ENCRYPTION_KEY`. Claude's own connection isn't included.
+- **Rotate the key:** run `docker compose exec mcp node dist/cli/rotate-key.js`, copy the printed `ENCRYPTION_KEY` into
+  `.env` and restart. The previous file is kept as `state.enc.bak-<time>` until you delete it.
+
 ## Roadmap
 
 Ideas that would make this more useful. Open an issue if one matters to you.
 
-- A **Test connection** button and status on each account, with warnings for expiring tokens
-- Per-account **read-only mode** and per-tool switches, so a work account can be locked to reads
-- An **activity log** of tool calls (time, account, tool, result) in the admin UI
-- A list of connected **Claude clients** with revoke
-- Account **groups and defaults**, for example "all work accounts"
-- Passkey or TOTP sign-in for the admin UI
-- More services: Slack, Notion, Linear, Atlassian, Dropbox
-- Encrypted export and import of the state file, and an `ENCRYPTION_KEY` rotation command
-- Automated tests
+- Passkey (WebAuthn) sign-in for the admin UI
+- More services: Dropbox, Todoist, Stripe (read-only), Vercel
+- Per-account tool switches (today they apply to every account)
+- Webhook or email alerts when an account starts failing
+- Prometheus metrics endpoint
 
 ## License
 

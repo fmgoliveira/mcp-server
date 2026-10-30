@@ -13,6 +13,10 @@ const ALLOWED_HOSTS: Record<Provider, RegExp> = {
   cloudflare: /^api\.cloudflare\.com$/,
   discord: /^discord\.com$/,
   figma: /^api\.figma\.com$/,
+  slack: /^slack\.com$/,
+  notion: /^api\.notion\.com$/,
+  linear: /^api\.linear\.app$/,
+  atlassian: /^$/, // checked against the account's own site URL (see checkHost)
 };
 
 export interface ApiOpts {
@@ -34,10 +38,12 @@ function nextLink(r: Response): string | undefined {
   return undefined;
 }
 
-function checkHost(provider: Provider, acc: Account, u: URL) {
+export function checkHost(provider: Provider, acc: Account, u: URL) {
   const ok =
     u.protocol === "https:" &&
-    (provider === "gitlab" ? u.hostname === new URL(acc.baseUrl ?? DEFAULT_GITLAB).hostname : ALLOWED_HOSTS[provider].test(u.hostname));
+    (provider === "gitlab" || provider === "atlassian"
+      ? !!(acc.baseUrl ?? (provider === "gitlab" ? DEFAULT_GITLAB : "")) && u.hostname === new URL(acc.baseUrl ?? DEFAULT_GITLAB).hostname
+      : ALLOWED_HOSTS[provider].test(u.hostname));
   if (!ok) throw new Error(`Host ${u.hostname} is not allowed for ${provider} accounts`);
 }
 
@@ -65,7 +71,7 @@ export async function api(label: string, provider: Provider, url: string, opts: 
       method: opts.method ?? (opts.body ? "POST" : "GET"),
       headers: {
         ...defaultHeaders(provider),
-        ...authHeaders(provider, await accessToken(label)),
+        ...authHeaders(provider, await accessToken(label), acc.username),
         ...(opts.body !== undefined && !(opts.body instanceof Uint8Array) ? { "content-type": "application/json" } : {}),
         ...opts.headers,
       },

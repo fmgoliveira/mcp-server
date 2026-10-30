@@ -14,8 +14,9 @@ npm run dev               # http://localhost:3000/admin
 For OAuth sign-in to work locally, `PUBLIC_URL` has to be a URL the provider can redirect back to. A tunnel such as
 `cloudflared` or `ngrok` works well. API-token services (GitLab, Cloudflare, Discord, Figma) need no tunnel.
 
-`npm run build` runs the TypeScript compiler and is also the typecheck. There is no test suite yet, so please describe how
-you checked your change in the pull request.
+`npm run build` runs the TypeScript compiler and is also the typecheck. `npm test` runs the test suite (node:test; no
+services needed). Please add or update a test with your change, especially for policy, auth and backup code, and run both
+commands before opening a pull request.
 
 ## Code conventions
 
@@ -32,7 +33,7 @@ you checked your change in the pull request.
 ## Adding a provider
 
 1. Extend `OAuthProvider` (or `TokenProvider`) in `src/store.ts` and add the host rule in `src/api.ts`.
-2. Add config in `src/config.ts`, auth and token URLs in `src/providers.ts` (or `src/tokens.ts` for API tokens), and an
+2. Add the service to `PREFIXES` in `src/policy.ts` (so default accounts and read-only mode work), add config in `src/config.ts`, auth and token URLs in `src/providers.ts` (or `src/tokens.ts` for API tokens), and an
    entry in `META` in `src/ui.ts`.
 3. Create `src/tools/<provider>.ts` with a `registerX(server)` function and register it in `src/server.ts`.
 4. Document the setup steps in the README and add any new variables to `.env.example`.

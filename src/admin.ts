@@ -1,55 +1,16 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router } from "express";
 import { config } from "./config.js";
 import { buildAuthUrl, completeConnect, invalidate, redirectUri } from "./providers.js";
-import { ENV_CREDENTIAL, getState, listAccounts, listCredentials, save, PROVIDERS, type OAuthProvider, type Provider } from "./store.js";
-import { normalizeBaseUrl, TOKEN_META, verifyToken } from "./tokens.js";
+import { ENV_CREDENTIAL, getState, listAccounts, listCredentials, save, PROVIDERS, type Account, type OAuthProvider, type Provider } from "./store.js";
+import { normalizeBaseUrl, normalizeSiteUrl, TOKEN_META, verifyToken } from "./tokens.js";
 import { passwordOk, recordFail, tooManyFails } from "./auth-provider.js";
-import { badge, errorGate, esc, gate, icon, META, shell, type NavKey } from "./ui.js";
-
-const sign = (v: string) => createHmac("sha256", config.encryptionKey).update(v).digest("base64url");
-
-function makeSession(): string {
-  const exp = String(Date.now() + 12 * 3600_000);
-  return `${exp}.${sign(exp)}`;
-}
-function validSession(req: Request): boolean {
-  const m = /(?:^|;\s*)sess=([^;]+)/.exec(req.headers.cookie ?? "");
-  if (!m) return false;
-  const [exp, sig] = m[1].split(".");
-  if (!exp || !sig || Number(exp) < Date.now()) return false;
-  const a = Buffer.from(sig);
-  const b = Buffer.from(sign(exp));
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-const guard = (req: Request, res: Response, next: NextFunction) =>
-  validSession(req) ? next() : res.redirect("/admin/login");
-
-const PAT_CREDENTIAL = "pat"; // marks accounts connected with a pasted API token (no OAuth app)
-const ALL_PROVIDERS = Object.keys(META) as Provider[];
-const LABEL_PATTERN = "[a-zA-Z0-9_\\-]{1,32}";
-const mcpUrl = `${config.publicUrl}/mcp`;
-
-// Flash messages are looked up by key, so query parameters are never reflected into the page.
-const FLASH: Record<string, string> = {
-  removed: "Account removed.",
-  "token-added": "Token verified and saved.",
-  "app-saved": "OAuth app saved. You can connect an account with it now.",
-  "app-removed": "OAuth app removed.",
-};
-const flash = (req: Request) => {
-  const m = FLASH[String(req.query.msg ?? "")];
-  return m ? `<p class=notice role=status>${esc(m)}</p>` : "";
-};
-
-const page = (res: Response, active: NavKey, title: string, body: string) =>
-  res.type("html").send(shell({ title, active, mcpUrl, body }));
-
-const fail = (res: Response, status: number, title: string, message: string, back = { href: "/admin", text: "Back to accounts" }) =>
-  res.status(status).type("html").send(errorGate(title, message, back));
-
-const header = (title: string, lede: string, actions = "") =>
-  `<div class=page-head><div><h1>${title}</h1><p class=lede>${lede}</p></div>${actions}</div>`;
+import { checkAll, daysLeft } from "./health.js";
+import { checkSecondFactor, totpEnabled } from "./security.js";
+import { badge, esc, gate, icon, META } from "./ui.js";
+import { adminMore } from "./admin-more.js";
+import {
+  ALL_PROVIDERS, endSession, fail, flash, guard, header, LABEL_PATTERN, LABEL_RE, page, PAT_CREDENTIAL, startPre, startSession, validPre,
+} from "./admin-shared.js";
 
 export const admin = Router();
 
@@ -66,6 +27,18 @@ ${error ? `<p class="notice error" role=alert>${esc(error)}</p>` : ""}
 <div class=form-end><button class="btn btn-primary btn-block">Sign in</button></div></form></div>`,
   );
 
+const codePage = (error = "") =>
+  gate(
+    "Two-step sign-in · Multi-account MCP",
+    `<img class=gate-mark src=/favicon.svg alt="">
+<div class=panel><h1>Enter your code</h1><p class=lede>Open your authenticator app and type the 6-digit code, or use a recovery code.</p>
+<form method=post action=/admin/login/code style="margin-top:20px">
+${error ? `<p class="notice error" role=alert>${esc(error)}</p>` : ""}
+<label class=field-label for=code>Authenticator code</label>
+<input id=code type=text name=code inputmode=numeric autocomplete=one-time-code autofocus required>
+<div class=form-end><button class="btn btn-primary btn-block">Verify</button></div></form></div>`,
+  );
+
 admin.get("/admin/login", (_req, res) => res.type("html").send(loginPage()));
 
 admin.post("/admin/login", (req, res) => {
@@ -74,21 +47,64 @@ admin.post("/admin/login", (req, res) => {
     recordFail();
     return void res.status(401).type("html").send(loginPage("That password isn't right."));
   }
-  res.setHeader("Set-Cookie", `sess=${makeSession()}; HttpOnly; Secure; SameSite=Strict; Path=/admin; Max-Age=43200`);
+  if (totpEnabled()) {
+    startPre(res);
+    return void res.redirect("/admin/login/code");
+  }
+  startSession(res);
+  res.redirect("/admin");
+});
+
+admin.get("/admin/login/code", (req, res) => (validPre(req) ? res.type("html").send(codePage()) : res.redirect("/admin/login")));
+
+admin.post("/admin/login/code", (req, res) => {
+  if (!validPre(req)) return void res.redirect("/admin/login");
+  if (tooManyFails()) return void res.status(429).type("html").send(codePage("Too many attempts. Try again in a few minutes."));
+  if (!checkSecondFactor(String(req.body?.code ?? ""))) {
+    recordFail();
+    return void res.status(401).type("html").send(codePage("That code isn't right."));
+  }
+  startSession(res);
   res.redirect("/admin");
 });
 
 admin.post("/admin/logout", (_req, res) => {
-  res.setHeader("Set-Cookie", "sess=; HttpOnly; Secure; SameSite=Strict; Path=/admin; Max-Age=0");
+  endSession(res);
   res.redirect("/admin/login");
 });
 
 // ---------- accounts ----------
+const attention = (accounts: Account[]) => {
+  const items: string[] = [];
+  for (const a of accounts) {
+    const d = daysLeft(a);
+    if (a.health && !a.health.ok) items.push(`<a href="/admin/account/${esc(a.label)}">${esc(a.label)}</a> is failing`);
+    else if (d !== undefined && d < 0) items.push(`<a href="/admin/account/${esc(a.label)}">${esc(a.label)}</a>'s token has expired`);
+    else if (d !== undefined && d <= 14) items.push(`<a href="/admin/account/${esc(a.label)}">${esc(a.label)}</a>'s token expires in ${d} day${d === 1 ? "" : "s"}`);
+  }
+  return items.length ? `<p class="notice warn" role=status><b>Needs attention:</b> ${items.join(" · ")}</p>` : "";
+};
+
+export const tagsFor = (a: Account) => {
+  const t: string[] = [];
+  if (a.isDefault) t.push(`<span class="tag tag-accent" title="Used when a tool is called without an account">default</span>`);
+  if (a.readOnly) t.push(`<span class="tag tag-lock" title="Only read-only tools may use this account">read-only</span>`);
+  if (a.group) t.push(`<span class=tag title="Group">${esc(a.group)}</span>`);
+  const d = daysLeft(a);
+  if (d !== undefined && d <= 14) t.push(`<span class="tag tag-warn">${d < 0 ? "token expired" : `expires in ${d} d`}</span>`);
+  return t.join("");
+};
+
+export const statusDot = (a: Account) =>
+  a.health
+    ? `<span class="dot ${a.health.ok ? "ok" : "bad"}" title="${a.health.ok ? "Working" : `Failing: ${esc(a.health.error ?? "")}`} (checked ${esc(a.health.checkedAt.slice(0, 16).replace("T", " "))} UTC)"></span>`
+    : `<span class="dot" title="Not tested yet"></span>`;
+
 admin.get("/admin", guard, (req, res) => {
   const accounts = listAccounts();
   const groups = ALL_PROVIDERS.map((p) => ({ p, list: accounts.filter((a) => a.provider === p) })).filter((g) => g.list.length);
 
-  const items = (list: typeof accounts) =>
+  const items = (list: Account[]) =>
     list
       .map((a) => {
         const isPat = a.credentialId === PAT_CREDENTIAL;
@@ -98,12 +114,13 @@ admin.get("/admin", guard, (req, res) => {
         const reconnect = isPat
           ? ""
           : `<form method=post action=/admin/connect><input type=hidden name=label value="${esc(a.label)}"><input type=hidden name=provider value="${a.provider}"><input type=hidden name=credential value="${esc(a.credentialId ?? ENV_CREDENTIAL)}"><button class=btn title="Sign in again to refresh access">${icon.refresh}Reconnect</button></form>`;
-        const q = `${a.label} ${a.email} ${META[a.provider].name} ${tag}`.toLowerCase();
-        return `<li class=item data-q="${esc(q)}">
-<div class=main><div class=label>${esc(a.label)}</div><div class=sub>${esc(identity)}</div></div>
+        const q = `${a.label} ${a.email} ${META[a.provider].name} ${tag} ${a.group ?? ""}`.toLowerCase();
+        return `<li class=item data-q="${esc(q)}">${statusDot(a)}
+<div class=main><div class=label-row><a class=label href="/admin/account/${esc(a.label)}">${esc(a.label)}</a>${tagsFor(a)}</div><div class=sub>${esc(identity)}</div></div>
 <span class=tag title="Added ${esc(a.addedAt.slice(0, 10))}">${esc(tag)}</span>
 <details class=menu><summary class="btn btn-quiet btn-icon" aria-label="Actions for ${esc(a.label)}">${icon.more}</summary>
-<div class=menu-pop>${reconnect}
+<div class=menu-pop><a class=btn href="/admin/account/${esc(a.label)}">${icon.edit}Settings</a>
+<form method=post action="/admin/account/${esc(a.label)}/test"><button class=btn>${icon.check}Test connection</button></form>${reconnect}
 <form method=post action=/admin/remove data-confirm="Remove ${esc(a.label)}? Claude will lose access to it."><input type=hidden name=label value="${esc(a.label)}"><button class="btn btn-danger">${icon.trash}Remove</button></form></div></details>
 </li>`;
       })
@@ -123,9 +140,14 @@ admin.get("/admin", guard, (req, res) => {
     ? `${n} account${n === 1 ? "" : "s"} across ${groups.length} service${groups.length === 1 ? "" : "s"}. Claude picks an account by its label.`
     : "Everything Claude can reach through this server.";
   const actions = n
-    ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${n > 5 ? `<input class=search id=filter type=text placeholder="Search accounts" aria-label="Search accounts">` : ""}<a class="btn btn-primary" href=/admin/add>${icon.plus}Add account</a></div>`
+    ? `<div class=head-actions>${n > 5 ? `<input class=search id=filter type=text placeholder="Search accounts" aria-label="Search accounts">` : ""}<form method=post action=/admin/test-all><button class=btn title="Check that every account still works">${icon.check}Test all</button></form><a class="btn btn-primary" href=/admin/add>${icon.plus}Add account</a></div>`
     : "";
-  page(res, "accounts", "Accounts", flash(req) + header("Accounts", lede, actions) + body);
+  page(res, "accounts", "Accounts", flash(req) + attention(accounts) + header("Accounts", lede, actions) + body);
+});
+
+admin.post("/admin/test-all", guard, async (_req, res) => {
+  await checkAll();
+  res.redirect("/admin?msg=tested-all");
 });
 
 // ---------- add account ----------
@@ -133,7 +155,7 @@ admin.get("/admin/add", guard, (req, res) => {
   const configured = (p: OAuthProvider) => listCredentials(p).length > 0;
   const want = String(req.query.service ?? "");
   const firstOAuth = PROVIDERS.find(configured) ?? PROVIDERS[0];
-  const selected = PROVIDERS.includes(want as OAuthProvider) ? want : want === "github-token" ? "github-token" : firstOAuth;
+  const selected = PROVIDERS.includes(want as OAuthProvider) ? want : want in TOKEN_META ? `${want}-token` : firstOAuth;
 
   const tile = (p: Provider, kind: "oauth" | "token", blurb: string, name: string) => {
     const checked = (kind === "oauth" && selected === p) || (kind === "token" && selected === `${p}-token`);
@@ -144,8 +166,7 @@ admin.get("/admin/add", guard, (req, res) => {
     .map((k) => tile(k as Provider, "token", k === "github" ? "Personal access token" : META[k as Provider].blurb, k === "github" ? "GitHub token" : TOKEN_META[k].name))
     .join("");
 
-  const creds = listCredentials();
-  const credOptions = creds
+  const credOptions = listCredentials()
     .map((c) => `<option value="${esc(c.id)}" data-provider="${c.provider}">${esc(c.name)}</option>`)
     .join("");
   const hints = Object.entries(TOKEN_META).map(([k, m]) => `<p class=hint data-hint=${k} hidden>${esc(m.hint)}</p>`).join("");
@@ -169,21 +190,26 @@ admin.get("/admin/add", guard, (req, res) => {
 <input id=token type=password name=token autocomplete=new-password disabled required>
 ${hints}</div>
 </div>
-<div class=field data-show=gitlab hidden><label class=field-label for=baseUrl>GitLab base URL</label>
-<input id=baseUrl type=text name=baseUrl placeholder="https://gitlab.com" disabled>
-<p class=hint>Leave empty for gitlab.com. Self-hosted instances must use https.</p></div>
+<div class=form-row style="margin-top:16px">
+<div class=field data-show=atlassian hidden><label class=field-label for=username>Email address</label>
+<input id=username type=text name=username placeholder="you@example.com" disabled>
+<p class=hint>The Atlassian account the API token belongs to.</p></div>
+<div class=field data-show=baseurl hidden><label class=field-label for=baseUrl id=baseurl-label>Base URL</label>
+<input id=baseUrl type=text name=baseUrl disabled>
+<p class=hint id=baseurl-hint></p></div>
+</div>
 </div>
 
 <div class=form-end><button class="btn btn-primary" id=add-submit>Connect account</button>
 <span class=hint style="margin:0">Tokens are verified against the service and stored encrypted.</span></div>
 </form>`;
-  page(res, "add", "Add account", flash(req) + body);
+  page(res, "accounts", "Add account", flash(req) + body);
 });
 
 admin.post("/admin/connect", guard, (req, res) => {
   const provider = req.body?.provider as OAuthProvider;
   const label = String(req.body?.label ?? "");
-  if (!PROVIDERS.includes(provider) || !/^[a-zA-Z0-9_-]{1,32}$/.test(label)) {
+  if (!PROVIDERS.includes(provider) || !LABEL_RE.test(label)) {
     return void fail(res, 400, "Check the form", "Pick a service and a label (letters, numbers, - and _, up to 32 characters).", { href: "/admin/add", text: "Back" });
   }
   const credId = String(req.body?.credential ?? "");
@@ -198,12 +224,14 @@ admin.post("/admin/token", guard, async (req, res) => {
   const provider = String(req.body?.provider ?? "");
   const label = String(req.body?.label ?? "");
   const token = String(req.body?.token ?? "").trim();
-  if (!(provider in TOKEN_META) || !/^[a-zA-Z0-9_-]{1,32}$/.test(label) || !token) {
+  const username = String(req.body?.username ?? "").trim();
+  if (!(provider in TOKEN_META) || !LABEL_RE.test(label) || !token) {
     return void fail(res, 400, "Check the form", "Service, label and token are all required.", { href: "/admin/add", text: "Back" });
   }
   try {
-    const baseUrl = provider === "gitlab" ? normalizeBaseUrl(String(req.body?.baseUrl ?? "")) : undefined;
-    const { identity, scopes } = await verifyToken(provider, token, baseUrl);
+    const baseUrl = provider === "gitlab" ? normalizeBaseUrl(String(req.body?.baseUrl ?? "")) : provider === "atlassian" ? normalizeSiteUrl(String(req.body?.baseUrl ?? "")) : undefined;
+    const { identity, scopes, expiresAt } = await verifyToken(provider, token, baseUrl, username);
+    const prev = getState().accounts[label];
     getState().accounts[label] = {
       label,
       provider: provider as Provider,
@@ -213,6 +241,10 @@ admin.post("/admin/token", guard, async (req, res) => {
       addedAt: new Date().toISOString(),
       credentialId: PAT_CREDENTIAL,
       ...(baseUrl ? { baseUrl } : {}),
+      ...(provider === "atlassian" ? { username } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      health: { ok: true, checkedAt: new Date().toISOString() },
+      ...(prev ? { readOnly: prev.readOnly, group: prev.group, isDefault: prev.isDefault } : {}),
     };
     invalidate(label);
     save();
@@ -253,7 +285,8 @@ admin.get("/admin/apps", guard, (req, res) => {
     (p) => `<div class=url-row><span class=name>${META[p].name}</span><code>${esc(redirectUri(p))}</code><button type=button class="btn btn-quiet" data-copy="${esc(redirectUri(p))}">${icon.copy}<span data-copy-label>Copy</span></button></div>`,
   ).join("");
 
-  const body = `${header("OAuth apps", "The client IDs Claude's server uses to sign in to Google, Microsoft, Canva and GitHub. Secrets are stored encrypted.")}
+  const body = `<p class=crumb><a href=/admin/settings>Settings</a> / OAuth apps</p>
+${header("OAuth apps", "The client IDs this server uses to sign in to Google, Microsoft, Canva and GitHub. Secrets are stored encrypted.")}
 ${rows ? `<ul class=list>${rows}</ul>` : `<div class=empty><h2>No OAuth apps yet</h2><p>Create an app with the provider, then save its client ID and secret below.</p></div>`}
 
 <details class=panel style="margin-top:16px"${rows && !req.query.service ? "" : " open"}><summary>Add an OAuth app</summary>
@@ -270,7 +303,7 @@ ${rows ? `<ul class=list>${rows}</ul>` : `<div class=empty><h2>No OAuth apps yet
 
 <details class=panel><summary>Redirect URLs to register with each provider</summary>
 ${urls}</details>`;
-  page(res, "apps", "OAuth apps", flash(req) + body);
+  page(res, "settings", "OAuth apps", flash(req) + body);
 });
 
 admin.post("/admin/credentials", guard, (req, res) => {
@@ -320,3 +353,6 @@ for (const provider of PROVIDERS) {
     }
   });
 }
+
+admin.use(adminMore);
+void config;
