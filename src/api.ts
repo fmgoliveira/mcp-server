@@ -8,7 +8,7 @@ const ALLOWED_HOSTS: Record<Provider, RegExp> = {
   google: /^[a-z0-9-]+\.googleapis\.com$/,
   microsoft: /^graph\.microsoft\.com$/,
   github: /^api\.github\.com$/,
-  canva: /^api\.canva\.com$/,
+  canva: /^(api|mcp)\.canva\.com$/, // mcp.canva.com only via CANVA_MCP_URL (editing)
   gitlab: /^$/, // checked against the account's own base URL (see checkHost)
   cloudflare: /^api\.cloudflare\.com$/,
   discord: /^discord\.com$/,

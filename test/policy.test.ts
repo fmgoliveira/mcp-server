@@ -111,3 +111,12 @@ test("slack_api is read-only only for read-style methods", () => {
   assertAllowed("slack_api", { destructive: true }, "sl", { method: "conversations.info" });
   assert.throws(() => assertAllowed("slack_api", { destructive: true }, "sl", { method: "chat.delete" }), /read-only/);
 });
+
+test("Canva editing is blocked on read-only accounts, reading is not", () => {
+  acc("cv", "canva", { readOnly: true });
+  assert.equal(providerOf("canva_edit_start"), "canva");
+  assertAllowed("canva_mcp_tools", { readOnly: true }, "cv", {});
+  assertAllowed("canva_design_content", { readOnly: true }, "cv", {});
+  assert.throws(() => assertAllowed("canva_edit_commit", { destructive: true }, "cv", {}), /read-only/);
+  assert.throws(() => assertAllowed("canva_mcp", { destructive: true }, "cv", {}), /read-only/);
+});

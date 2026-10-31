@@ -3,6 +3,7 @@ import { registerCommon } from "./tools/common.js";
 import { registerGoogle } from "./tools/google.js";
 import { registerMicrosoft } from "./tools/microsoft.js";
 import { registerCanva } from "./tools/canva.js";
+import { registerCanvaEdit } from "./tools/canva-edit.js";
 import { registerGithub } from "./tools/github.js";
 import { registerTeams } from "./tools/teams.js";
 import { registerGitlab } from "./tools/gitlab.js";
@@ -21,6 +22,7 @@ export function buildServer(): McpServer {
   registerGoogle(s);
   registerMicrosoft(s);
   registerCanva(s);
+  registerCanvaEdit(s);
   registerGithub(s);
   registerTeams(s);
   registerGitlab(s);

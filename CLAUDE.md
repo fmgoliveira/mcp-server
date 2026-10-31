@@ -32,7 +32,9 @@ an `account` label; list/search tools fan out over all accounts of that provider
   token, retries once on 401, enforces a **host allowlist**, optional `pages` to follow `Link: rel=next`,
   and `out()` truncates output to 60k chars.
 - `tools/common.ts` – `tool()` wrapper (error → `isError`, annotations), `fanOut()`, `list_accounts`.
-- `tools/{google,microsoft,canva,github}.ts` – one `registerX(server)` each.
+- `tools/{google,microsoft,canva,github}.ts` – one `registerX(server)` each. `tools/canva-edit.ts` + `tools/canva-mcp.ts`: editing existing Canva designs
+  (the Connect REST API cannot) by acting as an MCP client of Canva's hosted MCP (`CANVA_MCP_URL`, default `https://api.canva.com/connect/v1/mcp`)
+  with the account's Canva token; transaction flow `canva_edit_start` → `canva_edit_apply` → `canva_edit_commit`. Needs "Canva MCP" enabled on the integration.
 
 ## Policy, activity and admin features
 - `policy.ts` – pure rules: `resolveAccount` (empty `account` → provider default or only account; a group name is rejected where one

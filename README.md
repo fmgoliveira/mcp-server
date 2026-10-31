@@ -20,7 +20,7 @@ accounts, or a named group, when you leave it out.
 | Google | OAuth | Gmail, Calendar, Drive, Docs, Sheets, Slides, Forms, plus `google_api` |
 | Microsoft 365 | OAuth | Outlook mail and calendar, OneDrive and SharePoint files, Excel ranges, plus `graph_api` |
 | Teams (optional) | Microsoft OAuth | Teams, channels, channel and chat messages, sending |
-| Canva | OAuth (PKCE) | Designs, create, export, folders, assets, brand templates and autofill, plus `canva_api` |
+| Canva | OAuth (PKCE) | Designs, create, **edit existing designs** (`canva_edit_*`, via Canva's hosted MCP), export, folders, assets, brand templates and autofill, plus `canva_api` / `canva_mcp` |
 | GitHub | GitHub App, OAuth App or token | Repos, search, your work, notifications, files, commits, Actions, issues, pull requests, plus `github_api` |
 | GitLab | API token (self-hosted works) | Projects, merge requests, issues, pipelines, plus `gitlab_api` |
 | Cloudflare | API token | Zones and DNS records, plus `cloudflare_api` |
