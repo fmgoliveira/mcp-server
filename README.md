@@ -1,5 +1,6 @@
 # Multi-account MCP
 
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/fmgoliveira/mcp-server)
 [![CI](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0b6b5c.svg)](LICENSE)
 
