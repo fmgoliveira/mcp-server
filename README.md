@@ -1,7 +1,7 @@
 # Multi-account MCP
 
 [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/fmgoliveira/mcp-server)
-[![M8ven Score](https://m8ven.ai/badge/mcp/fmgoliveira-mcp-server-1vu7k3?v=d5e6cd543978df4ff723ea794f253b38)](https://m8ven.ai/mcp/fmgoliveira-mcp-server-1vu7k3?s=readme)
+[![M8ven Score](https://m8ven.ai/badge/mcp/fmgoliveira-mcp-server-1vu7k3?v=cb838a0522f26b21d9c05d8252eca7f0)](https://m8ven.ai/mcp/fmgoliveira-mcp-server-1vu7k3?s=readme)
 [![CI](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fmgoliveira/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0b6b5c.svg)](LICENSE)
 
